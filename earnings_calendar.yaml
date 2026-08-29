@@ -1,0 +1,16 @@
+# Manually maintained upcoming-earnings dates for the curated single-name
+# universe (universe.py). Alpaca's MCP/API surface does not expose a
+# reliably-schemad forward earnings calendar (only historical corporate
+# actions), so rather than build on a guessed/unverified tool, Sleeve A's
+# earnings blackout and Sleeve B's earnings-IV-crush entries key off this
+# small hand-maintained file. Update this weekly during the competition
+# (each ticker reports roughly once per quarter).
+#
+# Format: SYMBOL: [ "YYYY-MM-DD", ... ]  (next known earnings date(s))
+AAPL: []
+MSFT: []
+NVDA: []
+GOOGL: []
+AMZN: []
+META: []
+AVGO: []

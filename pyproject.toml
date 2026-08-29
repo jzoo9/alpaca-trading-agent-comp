@@ -1,0 +1,32 @@
+[project]
+name = "alpaca-quant-agent"
+version = "0.1.0"
+description = "Autonomous options-selling AI trading agent on Alpaca (paper trading)"
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.50.0",
+    "mcp>=1.2.0",
+    "alpaca-py>=0.33.0",
+    "pandas>=2.2.0",
+    "numpy>=1.26.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0.0",
+    "pandas-market-calendars>=4.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["alpaca_quant_agent*"]

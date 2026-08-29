@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.alpacaquantagent.daemon</string>
+
+    <!-- EDIT THIS PATH to your actual repo location before loading -->
+    <key>WorkingDirectory</key>
+    <string>/Users/jessezhou/AlpacaAI Comp</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/jessezhou/AlpacaAI Comp/.venv/bin/python</string>
+        <string>-m</string>
+        <string>alpaca_quant_agent.main</string>
+        <string>--mode</string>
+        <string>daemon</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/jessezhou/AlpacaAI Comp/logs/daemon.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/jessezhou/AlpacaAI Comp/logs/daemon.err.log</string>
+</dict>
+</plist>

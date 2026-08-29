@@ -1,0 +1,75 @@
+# Strategy, universe, and risk-gate configuration for the VRP-harvesting agent.
+# All numeric limits here are read by risk/gates.py as hard, deterministic caps —
+# the LLM layer cannot override anything in this file.
+
+account:
+  starting_balance: 100000.0
+
+universe:
+  core_etfs:
+    - SPY
+    - QQQ
+    - IWM
+  # Curated quality / low-volatility mega-caps eligible for Sleeve A + Sleeve B.
+  # Rationale for each lives in alpaca_quant_agent/universe.py (not duplicated here).
+  quality_single_names:
+    - AAPL
+    - MSFT
+    - NVDA
+    - GOOGL
+    - AMZN
+    - META
+    - AVGO
+
+signals:
+  iv_rank_lookback_days: 63
+  iv_rank_entry_threshold: 40   # percentile, sleeve A entries require IV rank >= this
+  iv_rank_earnings_threshold: 80  # percentile, sleeve B entries require IV rank >= this
+  momentum_lookback_days: 252   # ~12 months
+  momentum_skip_days: 21        # skip most recent month (12-1 momentum)
+  ema_fast: 20
+  ema_slow: 50
+  adx_period: 14
+  adx_trend_threshold: 20       # ADX < this => no-trend regime => iron condor
+
+strategy:
+  sleeve_a:
+    target_dte_min: 30
+    target_dte_max: 45
+    short_delta_target: 0.22
+    short_delta_band: 0.05      # accept short strikes within +/- this of target
+    spread_width_etf: 5.0
+    spread_width_single_name: 5.0
+    take_profit_pct_of_credit: 0.50   # close at 50% of max profit captured
+    stop_loss_multiple_of_credit: 2.0 # close if loss reaches 2x credit received
+    time_stop_dte: 21
+    earnings_blackout_days: 3         # skip/close if earnings within N calendar days
+  sleeve_b_earnings:
+    max_days_to_earnings: 2
+    min_iv_rank: 80
+    close_next_session: true
+
+sizing:
+  kelly_fraction: 0.3           # fractional Kelly multiplier applied to full Kelly
+  # Assumed additive edge of realized win-rate over the delta-implied (risk-neutral)
+  # win probability, reflecting the volatility risk premium (IV > subsequent RV on
+  # average -- Carr & Wu 2009; Bakshi & Kapadia 2003). Conservative starting value;
+  # revisit once the live ledger has enough trades to estimate this empirically.
+  assumed_win_prob_edge: 0.04
+
+risk_gates:
+  max_risk_per_trade_pct: 0.02       # of equity, defined max loss of the spread
+  max_portfolio_heat_pct: 0.20       # of equity, sum of max loss across open positions
+  max_positions_per_underlying: 1
+  max_total_positions: 12
+  sleeve_b_max_allocation_pct: 0.15  # of equity, aggregate max loss in sleeve B
+  portfolio_delta_band_pct: 0.05     # of equity in $-delta terms
+  portfolio_vega_cap_pct: 0.03       # of equity in $-vega terms
+  daily_loss_halt_pct: -0.03
+  total_drawdown_kill_switch_pct: -0.10
+  min_open_interest: 100
+  max_bid_ask_spread_pct: 0.15       # of mid price
+
+scheduler:
+  cycle_interval_minutes: 15
+  timezone: America/New_York
