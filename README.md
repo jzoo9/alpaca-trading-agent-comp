@@ -49,7 +49,7 @@ at the top of that file / the "Known limitations" section of `WRITEUP.md`).
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest tests/ -q                      # 52 unit tests over signals/gates/sizing/screener/exits
+pytest tests/ -q                      # 74 unit tests over signals/gates/sizing/screener/exits/hedge
 ```
 
 ## 5. Verify the account is wired up correctly

@@ -42,6 +42,38 @@ ALL_ENTRIES: tuple[UniverseEntry, ...] = CORE_ETFS + QUALITY_SINGLE_NAMES
 SYMBOLS: tuple[str, ...] = tuple(e.symbol for e in ALL_ENTRIES)
 
 
+# Correlation buckets for the concentration gate (risk/gates.py).
+#
+# Short-premium positions on names in the same bucket tend to lose money at
+# the same time -- they share a dominant risk driver (a broad equity selloff
+# spikes every underlying's IV together, and their prices are highly
+# correlated). Capping aggregate defined-risk *within* a bucket is a cheap,
+# assumption-based proxy for measuring that co-movement directly (the full
+# data-driven version is the later portfolio-optimization work). A symbol not
+# listed here falls in its own singleton bucket (see bucket_for).
+#
+# SPY/QQQ are deliberately grouped with the mega-cap tech names: the "quality
+# mega-cap" list is overwhelmingly large-cap tech/growth, so a QQQ short and a
+# basket of AAPL/MSFT/NVDA/... shorts are largely the *same* bet. IWM (small
+# cap) and the broad market get their own buckets.
+CORRELATION_BUCKETS: dict[str, tuple[str, ...]] = {
+    "megacap_tech": ("QQQ", "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "AVGO"),
+    "broad_market": ("SPY",),
+    "small_cap": ("IWM",),
+}
+
+_SYMBOL_TO_BUCKET: dict[str, str] = {
+    sym: bucket for bucket, syms in CORRELATION_BUCKETS.items() for sym in syms
+}
+
+
+def bucket_for(symbol: str) -> str:
+    """Correlation bucket a symbol belongs to. Unlisted symbols get their own
+    singleton bucket (named after the symbol) so the concentration gate never
+    silently lumps an unknown name in with an existing group."""
+    return _SYMBOL_TO_BUCKET.get(symbol, f"_singleton::{symbol}")
+
+
 def is_etf(symbol: str) -> bool:
     return any(e.symbol == symbol and e.kind == "etf" for e in ALL_ENTRIES)
 

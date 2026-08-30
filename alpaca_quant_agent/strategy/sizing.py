@@ -78,17 +78,27 @@ def contracts_for_trade(
     max_loss_per_contract: float,
     kelly_multiplier: float,
     max_risk_per_trade_pct: float,
+    exposure_multiplier: float = 1.0,
 ) -> SizingResult:
     """Proposes a contract count sized to `kelly_multiplier` * full Kelly,
     hard-capped so dollars-at-risk never exceeds `max_risk_per_trade_pct`
     of equity regardless of what Kelly suggests.
+
+    `exposure_multiplier` (in [0, 1], default 1.0) is a global throttle applied
+    on top of everything else -- the volatility-term-structure scaler
+    (signals.vol_term_structure_regime) uses it to shrink or halt new premium
+    selling when the vol curve inverts. It scales the final fraction, so it can
+    only ever *reduce* size, never push it past the per-trade risk cap.
     """
     if equity <= 0:
         return SizingResult(0, 0.0, 0.0)
 
+    exposure_multiplier = max(0.0, min(1.0, exposure_multiplier))
+
     f_star = full_kelly_fraction(win_prob, credit_per_contract, max_loss_per_contract)
     fraction_used = f_star * kelly_multiplier
     fraction_used = min(fraction_used, max_risk_per_trade_pct)
+    fraction_used *= exposure_multiplier
 
     dollars_budget = equity * fraction_used
     contracts = math.floor(dollars_budget / max_loss_per_contract) if max_loss_per_contract > 0 else 0

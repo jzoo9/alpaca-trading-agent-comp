@@ -32,6 +32,24 @@ signals:
   adx_period: 14
   adx_trend_threshold: 20       # ADX < this => no-trend regime => iron condor
 
+# Volatility-term-structure exposure scaler (signals.vol_term_structure_regime).
+# Reads a front-vs-longer-dated vol ratio (VIX / VIX3M by default) and scales
+# ALL new short-premium exposure by a multiplier in [0, 1]. Short-vol is safe
+# to press in contango (near-term calm) and most dangerous in backwardation
+# (acute near-term stress) -- this presses the gas in calm regimes and pumps
+# the brakes when the curve inverts. Applied to fractional-Kelly sizing and
+# the portfolio heat budget in the screener.
+vol_term_structure:
+  enabled: true
+  front_symbol: VIX            # near-term implied vol index
+  back_symbol: VIX3M           # ~3-month implied vol index (longer-dated)
+  contango_ratio: 0.95         # ratio <= this => full exposure (multiplier 1.0)
+  backwardation_ratio: 1.00    # ratio >= this => labelled "backwardation" (log only)
+  floor_ratio: 1.10            # ratio >= this => min_exposure_multiplier (deepest throttle)
+  min_exposure_multiplier: 0.0 # floor: 0.0 = stop opening new premium when deeply inverted
+  # Exposure ramps linearly 1.0 -> min_exposure_multiplier as the front/back
+  # vol ratio rises from contango_ratio to floor_ratio (one continuous curve).
+
 strategy:
   sleeve_a:
     target_dte_min: 30
@@ -60,6 +78,12 @@ sizing:
 risk_gates:
   max_risk_per_trade_pct: 0.02       # of equity, defined max loss of the spread
   max_portfolio_heat_pct: 0.20       # of equity, sum of max loss across open positions
+  # Concentration gate: cap aggregate defined-risk within one correlation
+  # bucket (see universe.CORRELATION_BUCKETS). Positions in the same bucket
+  # (e.g. QQQ + the mega-cap tech single names) largely share one risk driver
+  # and lose together, so this stops the book from piling the whole heat
+  # budget into what is effectively a single bet. Must be <= portfolio heat.
+  max_bucket_heat_pct: 0.10          # of equity, sum of max loss within one bucket
   max_positions_per_underlying: 1
   max_total_positions: 12
   sleeve_b_max_allocation_pct: 0.15  # of equity, aggregate max loss in sleeve B

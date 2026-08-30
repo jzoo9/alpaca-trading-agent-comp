@@ -84,3 +84,55 @@ def test_contracts_for_trade_zero_equity():
         max_risk_per_trade_pct=0.02,
     )
     assert result.contracts == 0
+
+
+# --- exposure multiplier (idea 3: vol term-structure scaler) ---------------
+
+def test_exposure_multiplier_halves_size():
+    # Cap binds at 2% (5 contracts) at full exposure; a 0.5 multiplier should
+    # roughly halve the risk budget -> ~2-3 contracts (floor of 2500/400).
+    full = contracts_for_trade(
+        equity=100_000.0, win_prob=0.85, credit_per_contract=100.0,
+        max_loss_per_contract=400.0, kelly_multiplier=1.0, max_risk_per_trade_pct=0.02,
+    )
+    throttled = contracts_for_trade(
+        equity=100_000.0, win_prob=0.85, credit_per_contract=100.0,
+        max_loss_per_contract=400.0, kelly_multiplier=1.0, max_risk_per_trade_pct=0.02,
+        exposure_multiplier=0.5,
+    )
+    assert full.contracts == 5
+    assert throttled.kelly_fraction_used == pytest.approx(0.01)
+    assert throttled.contracts == 2  # floor(100_000 * 0.01 / 400)
+
+
+def test_exposure_multiplier_zero_halts_new_size():
+    result = contracts_for_trade(
+        equity=100_000.0, win_prob=0.85, credit_per_contract=100.0,
+        max_loss_per_contract=400.0, kelly_multiplier=1.0, max_risk_per_trade_pct=0.02,
+        exposure_multiplier=0.0,
+    )
+    assert result.contracts == 0
+
+
+def test_exposure_multiplier_default_is_no_op():
+    a = contracts_for_trade(
+        equity=100_000.0, win_prob=0.85, credit_per_contract=100.0,
+        max_loss_per_contract=400.0, kelly_multiplier=1.0, max_risk_per_trade_pct=0.02,
+    )
+    b = contracts_for_trade(
+        equity=100_000.0, win_prob=0.85, credit_per_contract=100.0,
+        max_loss_per_contract=400.0, kelly_multiplier=1.0, max_risk_per_trade_pct=0.02,
+        exposure_multiplier=1.0,
+    )
+    assert a.contracts == b.contracts
+
+
+def test_exposure_multiplier_out_of_range_is_clamped():
+    # >1 must not be able to inflate size past the cap.
+    result = contracts_for_trade(
+        equity=100_000.0, win_prob=0.85, credit_per_contract=100.0,
+        max_loss_per_contract=400.0, kelly_multiplier=1.0, max_risk_per_trade_pct=0.02,
+        exposure_multiplier=5.0,
+    )
+    assert result.kelly_fraction_used == pytest.approx(0.02)
+    assert result.contracts == 5

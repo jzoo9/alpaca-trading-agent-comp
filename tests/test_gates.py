@@ -7,6 +7,7 @@ CONFIG = {
     "risk_gates": {
         "max_risk_per_trade_pct": 0.02,
         "max_portfolio_heat_pct": 0.20,
+        "max_bucket_heat_pct": 0.10,
         "max_positions_per_underlying": 1,
         "max_total_positions": 12,
         "sleeve_b_max_allocation_pct": 0.15,
@@ -157,3 +158,60 @@ def test_circuit_breaker_clean_state():
     assert not state.manage_only
     assert not state.hedge_needed
     assert state.reasons == ()
+
+
+# --- concentration gate (idea 2) -------------------------------------------
+
+def test_concentration_gate_blocks_when_bucket_full():
+    # Existing tech-bucket exposure: 9000 (QQQ) + tries to add NVDA 2000 -> 11000
+    # = 11% of 100k, over the 10% bucket cap. NVDA and QQQ share the megacap_tech
+    # bucket, so this must be blocked even though the new trade alone is fine.
+    trade = make_trade(symbol="NVDA", contracts=5, max_loss_per_contract=400.0)
+    portfolio = make_portfolio(
+        open_positions=(
+            OpenPosition(symbol="QQQ", sleeve="A", max_loss=9000.0, net_delta=0.0, net_vega=0.0),
+        )
+    )
+    allowed, checks = gate_result(trade, portfolio, CONFIG)
+    assert not allowed
+    assert any(c.name == "max_bucket_heat" and not c.passed for c in checks)
+
+
+def test_concentration_gate_allows_diversifying_across_buckets():
+    # Same 9000 of tech exposure, but the new trade is IWM (small_cap bucket),
+    # so the tech bucket doesn't grow -- adding to a *different* bucket is fine.
+    trade = make_trade(symbol="IWM", contracts=5, max_loss_per_contract=400.0)
+    portfolio = make_portfolio(
+        open_positions=(
+            OpenPosition(symbol="QQQ", sleeve="A", max_loss=9000.0, net_delta=0.0, net_vega=0.0),
+        )
+    )
+    allowed, checks = gate_result(trade, portfolio, CONFIG)
+    assert allowed
+    assert any(c.name == "max_bucket_heat" and c.passed for c in checks)
+
+
+def test_concentration_gate_boundary_exactly_at_cap_passes():
+    # 8000 existing tech + 2000 new = 10000 = exactly 10% of 100k -> passes (<=).
+    trade = make_trade(symbol="AAPL", contracts=5, max_loss_per_contract=400.0)
+    portfolio = make_portfolio(
+        open_positions=(
+            OpenPosition(symbol="MSFT", sleeve="A", max_loss=8000.0, net_delta=0.0, net_vega=0.0),
+        )
+    )
+    allowed, checks = gate_result(trade, portfolio, CONFIG)
+    assert any(c.name == "max_bucket_heat" and c.passed for c in checks)
+
+
+def test_concentration_gate_skipped_when_unconfigured():
+    config = {k: dict(v) for k, v in CONFIG.items()}
+    config["risk_gates"] = dict(CONFIG["risk_gates"])
+    del config["risk_gates"]["max_bucket_heat_pct"]
+    trade = make_trade(symbol="NVDA")
+    portfolio = make_portfolio(
+        open_positions=(
+            OpenPosition(symbol="QQQ", sleeve="A", max_loss=9000.0, net_delta=0.0, net_vega=0.0),
+        )
+    )
+    allowed, checks = gate_result(trade, portfolio, config)
+    assert not any(c.name == "max_bucket_heat" for c in checks)

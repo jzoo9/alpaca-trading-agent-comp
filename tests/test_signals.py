@@ -9,6 +9,7 @@ from alpaca_quant_agent.strategy.signals import (
     iv_percentile,
     iv_rank,
     momentum_12_1,
+    vol_term_structure_regime,
 )
 
 
@@ -113,3 +114,64 @@ def test_classify_regime_neutral_when_flat():
     low = close * 0.997
     regime = classify_regime(high, low, close)
     assert regime.is_trending is False
+
+
+# --- vol term-structure regime (idea 3) ------------------------------------
+
+def test_vol_term_structure_contango_full_exposure():
+    # Front vol well below back vol -> healthy contango -> full exposure.
+    sig = vol_term_structure_regime(front_vol=14.0, back_vol=18.0)
+    assert sig.regime == "contango"
+    assert sig.exposure_multiplier == pytest.approx(1.0)
+    assert sig.ratio == pytest.approx(14.0 / 18.0)
+
+
+def test_vol_term_structure_deep_backwardation_hits_floor():
+    # ratio ~1.33 >= floor_ratio 1.10 -> deepest throttle (min_multiplier 0.0).
+    sig = vol_term_structure_regime(front_vol=40.0, back_vol=30.0)
+    assert sig.regime == "backwardation"
+    assert sig.exposure_multiplier == pytest.approx(0.0)
+
+
+def test_vol_term_structure_mild_backwardation_partial():
+    # Just inverted (ratio ~1.03): on the ramp, throttled but above the floor.
+    sig = vol_term_structure_regime(front_vol=20.6, back_vol=20.0)  # ratio 1.03
+    assert sig.regime == "backwardation"
+    # frac = (1.03 - 0.95) / (1.10 - 0.95) = 0.5333 -> mult = 1 - 0.5333 = 0.4667
+    assert sig.exposure_multiplier == pytest.approx(0.46667, abs=1e-4)
+
+
+def test_vol_term_structure_flat_zone_tapers():
+    # Ratio between contango (0.95) and backwardation (1.00) label anchors.
+    sig = vol_term_structure_regime(front_vol=19.5, back_vol=20.0)  # ratio 0.975
+    assert sig.regime == "flat"
+    # frac = (0.975 - 0.95) / 0.15 = 0.1667 -> mult = 0.8333
+    assert sig.exposure_multiplier == pytest.approx(0.83333, abs=1e-4)
+
+
+def test_vol_term_structure_continuous_no_jump_at_backwardation_anchor():
+    # The multiplier must be continuous across ratio = 1.00 (no discontinuity),
+    # since the ramp is a single line independent of the cosmetic label.
+    just_below = vol_term_structure_regime(front_vol=19.99, back_vol=20.0)  # 0.9995
+    just_above = vol_term_structure_regime(front_vol=20.01, back_vol=20.0)  # 1.0005
+    assert abs(just_below.exposure_multiplier - just_above.exposure_multiplier) < 0.01
+
+
+def test_vol_term_structure_misconfigured_ramp_fails_open():
+    sig = vol_term_structure_regime(front_vol=25.0, back_vol=20.0, contango_ratio=1.20, floor_ratio=1.10)
+    assert sig.exposure_multiplier == pytest.approx(1.0)
+
+
+def test_vol_term_structure_monotonic_in_ratio():
+    # Rising front/back ratio must never increase exposure.
+    prev = 1.01
+    for front in [18.0, 19.0, 19.5, 20.0, 21.0, 25.0, 30.0]:
+        sig = vol_term_structure_regime(front_vol=front, back_vol=20.0)
+        assert sig.exposure_multiplier <= prev + 1e-9
+        prev = sig.exposure_multiplier
+
+
+def test_vol_term_structure_bad_input_fails_open():
+    sig = vol_term_structure_regime(front_vol=0.0, back_vol=20.0)
+    assert sig.exposure_multiplier == pytest.approx(1.0)
+    assert sig.regime == "flat"

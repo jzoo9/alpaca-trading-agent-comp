@@ -146,6 +146,7 @@ def build_credit_spread_candidate(
     days_to_earnings: int | None,
     rationale_hint: str,
     vrp_edge: float = 0.0,
+    exposure_multiplier: float = 1.0,
 ) -> CandidateTrade | None:
     option_type = "put" if regime.direction == "bullish" else "call"
     exp_chain = [q for q in chain if q.expiration == expiration]
@@ -169,6 +170,7 @@ def build_credit_spread_candidate(
         max_loss_per_contract=max_loss,
         kelly_multiplier=kelly_multiplier,
         max_risk_per_trade_pct=max_risk_per_trade_pct,
+        exposure_multiplier=exposure_multiplier,
     )
     if sizing.contracts <= 0:
         return None
@@ -215,6 +217,7 @@ def build_iron_condor_candidate(
     days_to_earnings: int | None,
     rationale_hint: str,
     vrp_edge: float = 0.0,
+    exposure_multiplier: float = 1.0,
 ) -> CandidateTrade | None:
     exp_chain = [q for q in chain if q.expiration == expiration]
 
@@ -243,6 +246,7 @@ def build_iron_condor_candidate(
         max_loss_per_contract=max_loss,
         kelly_multiplier=kelly_multiplier,
         max_risk_per_trade_pct=max_risk_per_trade_pct,
+        exposure_multiplier=exposure_multiplier,
     )
     if sizing.contracts <= 0:
         return None

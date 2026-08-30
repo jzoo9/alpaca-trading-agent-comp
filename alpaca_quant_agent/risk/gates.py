@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from alpaca_quant_agent import universe
+
 
 @dataclass(frozen=True)
 class ProposedTrade:
@@ -70,6 +72,13 @@ class PortfolioState:
     def sleeve_b_heat(self) -> float:
         return sum(p.max_loss for p in self.open_positions if p.sleeve == "B")
 
+    def bucket_heat(self, bucket: str) -> float:
+        """Sum of max loss across open positions whose underlying belongs to
+        the given correlation bucket (universe.bucket_for)."""
+        return sum(
+            p.max_loss for p in self.open_positions if universe.bucket_for(p.symbol) == bucket
+        )
+
     def positions_in(self, symbol: str) -> int:
         return sum(1 for p in self.open_positions if p.symbol == symbol)
 
@@ -112,6 +121,20 @@ def evaluate_gates(trade: ProposedTrade, portfolio: PortfolioState, config: dict
         projected_heat_pct <= max_heat_pct,
         f"projected heat {projected_heat_pct:.4f} vs cap {max_heat_pct:.4f}",
     ))
+
+    # Concentration gate: aggregate defined-risk within the trade's correlation
+    # bucket must stay under cap. Skipped only if the limit isn't configured.
+    max_bucket_heat_pct = limits.get("max_bucket_heat_pct")
+    if max_bucket_heat_pct is not None:
+        bucket = universe.bucket_for(trade.symbol)
+        projected_bucket_pct = (
+            (portfolio.bucket_heat(bucket) + trade.total_max_loss) / equity if equity > 0 else float("inf")
+        )
+        checks.append(GateCheck(
+            "max_bucket_heat",
+            projected_bucket_pct <= max_bucket_heat_pct,
+            f"projected {bucket} bucket heat {projected_bucket_pct:.4f} vs cap {max_bucket_heat_pct:.4f}",
+        ))
 
     max_per_underlying = limits["max_positions_per_underlying"]
     existing = portfolio.positions_in(trade.symbol)

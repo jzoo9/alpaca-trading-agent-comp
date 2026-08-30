@@ -24,6 +24,7 @@ def screen_earnings_candidate(
     iv_rank_value: float,
     equity: float,
     config: dict,
+    exposure_multiplier: float = 1.0,
 ) -> CandidateTrade | None:
     cfg = config["strategy"]["sleeve_b_earnings"]
     days_to_earnings = (earnings_date - today).days
@@ -59,6 +60,7 @@ def screen_earnings_candidate(
         width=sizing_cfg["spread_width_single_name"],
         days_to_earnings=days_to_earnings,
         vrp_edge=vrp_edge,
+        exposure_multiplier=exposure_multiplier,
         rationale_hint=(
             f"Earnings IV-crush sleeve: {symbol} reports in {days_to_earnings}d, "
             f"IV rank {iv_rank_value:.0f} >= threshold {cfg['min_iv_rank']}; "

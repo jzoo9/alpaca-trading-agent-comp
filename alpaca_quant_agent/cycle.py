@@ -18,7 +18,9 @@ from alpaca_quant_agent.execution.alpaca_mcp import AlpacaMcpClient
 from alpaca_quant_agent.execution.position_manager import ManagedPosition, evaluate_exit
 from alpaca_quant_agent.risk import circuit_breaker
 from alpaca_quant_agent.risk.gates import OpenPosition, PortfolioState, gate_result
+from alpaca_quant_agent.risk.hedge import compute_delta_hedge
 from alpaca_quant_agent.strategy import earnings_sleeve
+from alpaca_quant_agent.strategy.signals import vol_term_structure_regime
 from alpaca_quant_agent.strategy.screener import (
     CandidateTrade,
     build_credit_spread_candidate,
@@ -140,6 +142,7 @@ def _screen_symbol(
     equity: float,
     today: date,
     config: dict,
+    exposure_multiplier: float = 1.0,
 ) -> list[CandidateTrade]:
     signals_cfg = config["signals"]
     sleeve_a_cfg = config["strategy"]["sleeve_a"]
@@ -159,6 +162,7 @@ def _screen_symbol(
                 kelly_multiplier=sizing_kelly, max_risk_per_trade_pct=risk_cfg["max_risk_per_trade_pct"],
                 short_delta_target=sleeve_a_cfg["short_delta_target"], short_delta_band=sleeve_a_cfg["short_delta_band"],
                 width=width, days_to_earnings=snapshot.days_to_earnings, vrp_edge=vrp_edge,
+                exposure_multiplier=exposure_multiplier,
             )
             if snapshot.regime.is_trending and snapshot.regime.direction in ("bullish", "bearish"):
                 rationale = (
@@ -181,11 +185,89 @@ def _screen_symbol(
         b_candidate = earnings_sleeve.screen_earnings_candidate(
             symbol=symbol, chain=snapshot.chain, today=today, earnings_date=earnings_date,
             iv_rank_value=snapshot.iv_rank_value, equity=equity, config=config,
+            exposure_multiplier=exposure_multiplier,
         )
         if b_candidate is not None:
             candidates.append(b_candidate)
 
     return candidates
+
+
+async def _latest_close(client: AlpacaMcpClient, symbol: str, today: date) -> float | None:
+    """Most recent daily close for an index/symbol, or None if unavailable."""
+    start = (today - timedelta(days=10)).isoformat()
+    end = today.isoformat()
+    try:
+        bars = await client.get_stock_bars(symbol, "1Day", start, end)
+    except Exception:  # noqa: BLE001 -- a missing/failed vol feed must not break the cycle
+        return None
+    if not bars:
+        return None
+    last = bars[-1]
+    close = last.get("close") if isinstance(last, dict) else None
+    return float(close) if close else None
+
+
+async def _exposure_multiplier(client: AlpacaMcpClient, today: date, config: dict) -> float:
+    """Global short-premium exposure throttle from the vol term structure
+    (signals.vol_term_structure_regime). Returns 1.0 (no throttle) whenever
+    the feature is disabled or a vol reading can't be obtained -- a missing
+    signal should never *increase* risk, only fail open to normal sizing.
+    """
+    cfg = config.get("vol_term_structure") or {}
+    if not cfg.get("enabled", False):
+        return 1.0
+
+    front = await _latest_close(client, cfg.get("front_symbol", "VIX"), today)
+    back = await _latest_close(client, cfg.get("back_symbol", "VIX3M"), today)
+    if front is None or back is None:
+        logger.warning("vol term-structure feed unavailable; defaulting exposure multiplier to 1.0")
+        return 1.0
+
+    signal = vol_term_structure_regime(
+        front, back,
+        contango_ratio=cfg.get("contango_ratio", 0.95),
+        backwardation_ratio=cfg.get("backwardation_ratio", 1.00),
+        floor_ratio=cfg.get("floor_ratio", 1.10),
+        min_multiplier=cfg.get("min_exposure_multiplier", 0.0),
+    )
+    logger.info(
+        "vol term structure: %s (ratio %.3f) -> exposure multiplier %.2f",
+        signal.regime, signal.ratio, signal.exposure_multiplier,
+    )
+    return signal.exposure_multiplier
+
+
+async def _apply_delta_hedge(
+    client: AlpacaMcpClient, db_path: str, today: date, portfolio: PortfolioState, config: dict, dry_run: bool = False
+) -> None:
+    """Turn a circuit-breaker delta/vega breach into a concrete SPY share
+    hedge that pulls net delta back toward neutral. Best-effort: an order
+    failure is logged, never fatal to the cycle."""
+    order = compute_delta_hedge(portfolio, config)
+    if not order.needed:
+        if order.vega_breach:
+            ledger.log_decision(db_path, candidate_id=None, symbol=order.symbol, decision="hedge_noted", detail=order.reason)
+        return
+
+    shares = order.shares
+    if shares <= 0:
+        return
+
+    if dry_run:
+        ledger.log_decision(db_path, candidate_id=None, symbol=order.symbol, decision="dry_run_would_hedge", detail=f"{order.side} {shares} {order.symbol}; {order.reason}")
+        logger.info("[DRY RUN] would hedge: %s %d %s (%s)", order.side, shares, order.symbol, order.reason)
+        return
+
+    client_order_id = f"hedge-{today.isoformat()}-{order.side}"
+    try:
+        await client.place_stock_order(order.symbol, order.side, shares, client_order_id)
+    except Exception as exc:  # noqa: BLE001 -- hedge failure must not crash the cycle
+        logger.warning("hedge order failed: %s", exc)
+        ledger.log_decision(db_path, candidate_id=None, symbol=order.symbol, decision="hedge_failed", detail=str(exc))
+        return
+    ledger.log_decision(db_path, candidate_id=None, symbol=order.symbol, decision="hedge_executed", detail=f"{order.side} {shares} {order.symbol}; {order.reason}")
+    logger.info("hedge executed: %s %d %s (%s)", order.side, shares, order.symbol, order.reason)
 
 
 async def run_one_cycle(config: Config, dry_run: bool = False) -> str:
@@ -205,11 +287,21 @@ async def run_one_cycle(config: Config, dry_run: bool = False) -> str:
         )
 
         cb_state = circuit_breaker.evaluate(portfolio, config.raw)
+
+        if cb_state.hedge_needed:
+            await _apply_delta_hedge(client, config.db_path, today, portfolio, config.raw, dry_run=dry_run)
+
         if cb_state.halt_new_entries:
             reason = "; ".join(cb_state.reasons)
             ledger.log_decision(config.db_path, candidate_id=None, symbol=None, decision="no_candidates", detail=f"circuit breaker halt: {reason}")
             logger.warning("circuit breaker halting new entries: %s", reason)
             return f"No new entries this cycle -- circuit breaker: {reason}"
+
+        exposure_multiplier = await _exposure_multiplier(client, today, config.raw)
+        if exposure_multiplier <= 0.0:
+            ledger.log_decision(config.db_path, candidate_id=None, symbol=None, decision="no_candidates", detail="vol term structure in backwardation -- new premium selling halted this cycle")
+            logger.warning("vol term structure inverted; halting new entries this cycle")
+            return "No new entries this cycle -- vol term structure in backwardation (exposure throttled to zero)."
 
         approved: dict[str, CandidateTrade] = {}
         for entry in universe.ALL_ENTRIES:
@@ -217,7 +309,7 @@ async def run_one_cycle(config: Config, dry_run: bool = False) -> str:
             snapshot = await build_symbol_snapshot(client, config.db_path, symbol, today, config.raw)
             if snapshot is None:
                 continue
-            for candidate in _screen_symbol(symbol, snapshot, equity, today, config.raw):
+            for candidate in _screen_symbol(symbol, snapshot, equity, today, config.raw, exposure_multiplier):
                 allowed, checks = gate_result(candidate.to_proposed_trade(), portfolio, config.raw)
                 if allowed:
                     approved[candidate.candidate_id] = candidate

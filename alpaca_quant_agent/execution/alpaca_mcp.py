@@ -165,6 +165,16 @@ class AlpacaMcpClient:
              "client_order_id": client_order_id},
         )
 
+    async def place_stock_order(self, symbol: str, side: str, qty: int, client_order_id: str) -> dict:
+        """Simple market stock order -- used only by the protective delta-hedge
+        overlay (risk/hedge.py) to trade SPY shares back to delta-neutral. This
+        is deterministic code, not an LLM-exposed tool."""
+        return await self.call_tool(
+            "place_stock_order",
+            {"symbol": symbol, "side": side, "qty": qty, "order_type": "market",
+             "time_in_force": "day", "client_order_id": client_order_id},
+        )
+
     async def get_orders(self, status: str = "open") -> list[dict]:
         return await self.call_tool("get_orders", {"status": status})
 

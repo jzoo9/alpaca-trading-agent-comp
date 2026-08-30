@@ -52,19 +52,53 @@ earlier in the same cycle.
 |---|---|
 | Max risk per trade | 2% of equity |
 | Max portfolio heat | 20% of equity |
+| Max correlation-bucket heat | 10% of equity (aggregate defined-risk within one bucket) |
 | Positions per underlying / total | 1 / 12 |
 | Sleeve B allocation cap | 15% of equity |
-| Portfolio delta / vega bands | 5% / 3% of equity (breach → protective SPY put hedge) |
+| Portfolio delta / vega bands | 5% / 3% of equity (delta breach → automatic SPY-share hedge to neutral; vega breach flagged) |
 | Daily loss halt | −3% → no new entries today |
 | Total drawdown kill switch | −10% from peak → manage-to-close only |
 | Liquidity floor | min open interest, max bid-ask spread |
 | Earnings blackout | Sleeve A skips/closes within 3 days of earnings |
 
-All 52 unit tests (`tests/`) exercise these — including exact-boundary cases
+All 74 unit tests (`tests/`) exercise these — including exact-boundary cases
 — plus the momentum/ADX/IV-rank signal math, Kelly sizing, and exit rules,
 independent of any live connection. A `--dry-run` mode runs the full cycle
 against live paper-market data (real chains, IV, news) with no orders sent,
 for pre-flight validation.
+
+## Portfolio-level risk overlays
+
+Three deterministic overlays sit on top of the per-trade gates, all
+unit-tested and all incapable of being overridden by the LLM layer:
+
+1. **Concentration gate (`risk/gates.py`, `universe.py`).** Positions on
+   names that share a dominant risk driver lose together, so a spread of
+   trades across QQQ + the mega-cap tech single names is largely one bet in
+   disguise. Each underlying is assigned to a correlation bucket
+   (`universe.CORRELATION_BUCKETS`); a new candidate is rejected if it would
+   push aggregate defined-risk within its bucket past `max_bucket_heat_pct`
+   (10% of equity). This is an assumption-based proxy for co-movement — the
+   data-driven covariance/tangency version is deferred until the ledger has
+   enough live P&L history to estimate it reliably.
+
+2. **Volatility-term-structure exposure scaler (`strategy/signals.py`).**
+   Short-vol is safe to press in contango (near-term calm) and most
+   dangerous in backwardation (acute near-term stress). Each cycle the agent
+   reads a front-vs-longer-dated vol ratio (VIX / VIX3M) and maps it to a
+   global exposure multiplier in [0, 1] applied to fractional-Kelly sizing:
+   full size in contango, tapering to zero as the curve inverts. It fails
+   open to full-but-still-gated sizing if the vol feed is unavailable, so a
+   missing signal can never *increase* risk.
+
+3. **Automatic delta hedge (`risk/hedge.py`).** The circuit breaker
+   previously only *flagged* a portfolio delta/vega band breach; it now acts
+   on it. On a delta breach the agent trades SPY shares to pull net delta
+   back to neutral (shares are precise and always tradeable), removing the
+   unintended directional bet a premium-selling book should not be making. A
+   vega-only breach is surfaced for the SPY-put overlay rather than hedged
+   with shares (shares carry no vega). Runs before new entries each cycle and
+   is dry-run aware.
 
 ## Alpaca infrastructure
 

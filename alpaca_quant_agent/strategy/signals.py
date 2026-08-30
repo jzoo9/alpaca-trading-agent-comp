@@ -112,6 +112,85 @@ def iv_percentile(iv_history: list[float], current_iv: float) -> float:
 
 
 @dataclass(frozen=True)
+class VolRegimeSignal:
+    """Volatility-term-structure regime, used to scale gross short-premium
+    exposure globally (strategy/screener sizing + heat budget).
+
+    `ratio` is front-month vol / longer-dated vol (e.g. VIX / VIX3M, or the
+    front two VIX futures). Short-volatility strategies are safe to press in
+    *contango* (ratio < 1: near-term calm relative to later) and are the most
+    dangerous in *backwardation* (ratio > 1: acute near-term stress), which
+    is exactly the setup that has historically produced the catastrophic
+    losses for premium sellers. `exposure_multiplier` in [0, 1] throttles new
+    exposure accordingly.
+    """
+    ratio: float
+    regime: str  # "contango" | "flat" | "backwardation"
+    exposure_multiplier: float
+
+
+def vol_term_structure_regime(
+    front_vol: float,
+    back_vol: float,
+    *,
+    contango_ratio: float = 0.95,
+    backwardation_ratio: float = 1.00,
+    floor_ratio: float = 1.10,
+    min_multiplier: float = 0.0,
+) -> VolRegimeSignal:
+    """Maps a front/back volatility ratio to a global exposure multiplier via a
+    single continuous, monotonically non-increasing linear ramp:
+
+    - ratio <= `contango_ratio`  -> full exposure (multiplier 1.0), "contango"
+    - ratio >= `floor_ratio`     -> `min_multiplier` (deepest throttle)
+    - in between                 -> linearly interpolated 1.0 -> min_multiplier
+
+    The regime *label* is purely cosmetic (for logs): "contango" below
+    `contango_ratio`, "backwardation" at/above `backwardation_ratio`, "flat"
+    between. The multiplier itself is one ramp with no discontinuities, so a
+    slightly rising ratio never causes a jump in exposure.
+
+    Defensive fallback (multiplier 1.0, "flat") if inputs are non-positive or
+    the ramp is misconfigured (floor_ratio <= contango_ratio): a bad reading
+    must never *increase* risk, and full-but-still-gated sizing is the safe
+    default.
+    """
+    if front_vol <= 0 or back_vol <= 0:
+        return VolRegimeSignal(ratio=0.0, regime="flat", exposure_multiplier=1.0)
+
+    ratio = front_vol / back_vol
+
+    # Misconfigured ramp (floor not strictly above contango) -> fail open,
+    # checked up front so it can't be pre-empted by the boundary branches below.
+    span = floor_ratio - contango_ratio
+    if span <= 0:
+        return VolRegimeSignal(ratio=ratio, regime="flat", exposure_multiplier=1.0)
+
+    regime = _vol_regime_label(ratio, contango_ratio, backwardation_ratio)
+
+    if ratio <= contango_ratio:
+        return VolRegimeSignal(ratio=ratio, regime=regime, exposure_multiplier=1.0)
+    if ratio >= floor_ratio:
+        return VolRegimeSignal(ratio=ratio, regime=regime, exposure_multiplier=_clamp01(min_multiplier))
+
+    frac = (ratio - contango_ratio) / span
+    mult = 1.0 - frac * (1.0 - min_multiplier)
+    return VolRegimeSignal(ratio=ratio, regime=regime, exposure_multiplier=_clamp01(mult))
+
+
+def _vol_regime_label(ratio: float, contango_ratio: float, backwardation_ratio: float) -> str:
+    if ratio <= contango_ratio:
+        return "contango"
+    if ratio >= backwardation_ratio:
+        return "backwardation"
+    return "flat"
+
+
+def _clamp01(x: float) -> float:
+    return float(min(1.0, max(0.0, x)))
+
+
+@dataclass(frozen=True)
 class RegimeSignal:
     direction: str  # "bullish" | "bearish" | "neutral"
     is_trending: bool  # True if ADX >= trend_threshold
