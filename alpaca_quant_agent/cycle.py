@@ -54,28 +54,27 @@ def _load_portfolio_state(db_path: str, equity: float, daily_pnl_pct: float) -> 
 
 
 def _extract_bid_ask(snap: dict) -> tuple[float, float]:
-    """get_option_snapshot's exact response shape wasn't independently
-    verified against a running alpaca-mcp-server, so this checks a couple of
-    plausible nestings (flat top-level, or nested under 'quote'/'latest_quote')
-    rather than assuming one. Verify against `list_tools()` output and adjust
-    if the live schema differs -- this is the only place that needs fixing.
+    """get_option_snapshot's real response shape (verified live against
+    alpaca-mcp-server 2.3.0): quotes live under `latestQuote.bp`/`.ap`
+    (bid/ask price), not top-level `bid_price`/`ask_price`.
     """
     if not isinstance(snap, dict):
         return 0.0, 0.0
-    for candidate in (snap, snap.get("quote") or {}, snap.get("latest_quote") or {}):
-        bid = candidate.get("bid_price")
-        ask = candidate.get("ask_price")
-        if bid is not None and ask is not None:
-            return float(bid or 0.0), float(ask or 0.0)
-    return 0.0, 0.0
+    quote = snap.get("latestQuote") or {}
+    bid = quote.get("bp")
+    ask = quote.get("ap")
+    if bid is None or ask is None:
+        return 0.0, 0.0
+    return float(bid or 0.0), float(ask or 0.0)
 
 
 async def _current_close_value(client: AlpacaMcpClient, legs_json: str) -> float | None:
     legs = json.loads(legs_json)
+    symbols = [leg["symbol"] for leg in legs]
+    snapshots = await client.get_option_snapshot(symbols)
     total = 0.0
     for leg in legs:
-        snap = await client.get_option_snapshot(leg["symbol"])
-        bid, ask = _extract_bid_ask(snap)
+        bid, ask = _extract_bid_ask(snapshots.get(leg["symbol"], {}))
         mid = (bid + ask) / 2.0
         if mid <= 0:
             return None  # can't safely value this leg right now (e.g. no quote) -- skip this cycle
@@ -204,7 +203,7 @@ async def _latest_close(client: AlpacaMcpClient, symbol: str, today: date) -> fl
     if not bars:
         return None
     last = bars[-1]
-    close = last.get("close") if isinstance(last, dict) else None
+    close = last.get("c") if isinstance(last, dict) else None  # bar field is "c" (verified live), not "close"
     return float(close) if close else None
 
 

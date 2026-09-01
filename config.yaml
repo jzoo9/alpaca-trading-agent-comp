@@ -31,6 +31,11 @@ signals:
   ema_slow: 50
   adx_period: 14
   adx_trend_threshold: 20       # ADX < this => no-trend regime => iron condor
+  # +/- band around the underlying price for option contract/chain requests.
+  # Required to avoid silently-truncated results on daily-expiring
+  # underlyings (e.g. SPY) where an unbounded strike range can return
+  # thousands of contracts -- see execution/alpaca_mcp.py::get_option_contracts.
+  option_strike_band_pct: 0.25
 
 # Volatility-term-structure exposure scaler (signals.vol_term_structure_regime).
 # Reads a front-vs-longer-dated vol ratio (VIX / VIX3M by default) and scales
@@ -66,6 +71,14 @@ strategy:
     max_days_to_earnings: 2
     min_iv_rank: 80
     close_next_session: true
+
+black_scholes:
+  # This paper account has no OPRA market-data subscription, so Alpaca's
+  # option endpoints return quotes but no greeks/IV -- we invert IV and
+  # compute delta/vega ourselves (strategy/black_scholes.py). Constant
+  # risk-free-rate approximation (short-term T-bill proxy); a live curve is
+  # out of scope for this competition build.
+  risk_free_rate: 0.045
 
 sizing:
   kelly_fraction: 0.3           # fractional Kelly multiplier applied to full Kelly

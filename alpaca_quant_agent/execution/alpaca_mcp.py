@@ -15,6 +15,14 @@ Two distinct uses of this same server, per the plan's "LLM's bounded role":
    never included in that subset -- the LLM's only path to placing an order
    is agent/tools.py's `submit_approved_trade`, a locally-defined tool that
    looks up a pre-computed, pre-gated order server-side.
+
+Every tool name and request/response shape below was verified against a
+live paper account (alpaca-mcp-server 2.3.0 / fastmcp 3.4.7), not guessed --
+see the module-level notes on each method for what the real payload looks
+like, since several diverge from what their tool descriptions alone would
+suggest (e.g. every response is wrapped in `{"data": {...}}`, and
+`get_option_chain`/`get_option_snapshot` carry no greeks or IV at all on
+the free indicative feed -- see strategy/black_scholes.py).
 """
 from __future__ import annotations
 
@@ -26,7 +34,6 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from alpaca_quant_agent.config import Config
-from alpaca_quant_agent.strategy.screener import OptionQuote
 
 
 def _alpaca_env(config: Config) -> dict[str, str]:
@@ -38,34 +45,48 @@ def _alpaca_env(config: Config) -> dict[str, str]:
 
 
 def alpaca_stdio_params(config: Config) -> StdioServerParameters:
-    return StdioServerParameters(command="uvx", args=["alpaca-mcp-server"], env=_alpaca_env(config))
+    # alpaca-mcp-server (as of 2.3.0) declares `fastmcp>=3.1.0` with no upper
+    # bound; fastmcp 4.0.0 renamed/removed fastmcp.tools.tool.ToolResult,
+    # which alpaca-mcp-server imports at startup, so an unpinned `uvx` install
+    # resolves a fastmcp that breaks it. Pin fastmcp <4 in the ephemeral uvx
+    # environment until upstream tightens its own constraint.
+    return StdioServerParameters(
+        command="uvx",
+        args=["--with", "fastmcp<4.0.0", "alpaca-mcp-server"],
+        env=_alpaca_env(config),
+    )
 
 
 # Read-only tool names the reasoning model (agent/brain.py) is allowed to
 # call directly during its turn. Order-placement tools are deliberately
-# excluded -- see module docstring.
-LLM_DATA_TOOL_NAMES = ["get_account", "get_positions", "get_news", "get_clock"]
+# excluded -- see module docstring. (Real tool names, verified live --
+# NOT get_account/get_positions/cancel_order as an earlier draft assumed.)
+LLM_DATA_TOOL_NAMES = ["get_account_info", "get_all_positions", "get_news", "get_clock"]
 
 
 def _extract_result(result: Any) -> Any:
-    """Unwraps an mcp.types.CallToolResult into plain Python data. Modern MCP
-    tool results may carry `structured_content` (already parsed JSON-like
-    data); otherwise we fall back to parsing the first text content block
-    (alpaca-mcp-server, like most MCP servers, returns JSON-serialized data
-    as a text block).
+    """Unwraps an mcp.types.CallToolResult into plain Python data, then
+    unwraps alpaca-mcp-server's own response envelope. Every verified
+    response from this server has the shape
+    `{"_alpaca_mcp_security": {...}, "data": <actual payload>}` -- the
+    security block is a static trust-annotation, not data, so callers
+    throughout this codebase should only ever see `<actual payload>`.
     """
     structured = getattr(result, "structured_content", None)
-    if structured is not None:
-        return structured
+    parsed = structured
+    if parsed is None:
+        for block in getattr(result, "content", []) or []:
+            text = getattr(block, "text", None)
+            if text is not None:
+                try:
+                    parsed = json.loads(text)
+                except (json.JSONDecodeError, TypeError):
+                    parsed = text
+                break
 
-    for block in getattr(result, "content", []) or []:
-        text = getattr(block, "text", None)
-        if text is not None:
-            try:
-                return json.loads(text)
-            except (json.JSONDecodeError, TypeError):
-                return text
-    return None
+    if isinstance(parsed, dict) and "data" in parsed and "_alpaca_mcp_security" in parsed:
+        return parsed["data"]
+    return parsed
 
 
 class AlpacaMcpClient:
@@ -96,8 +117,10 @@ class AlpacaMcpClient:
     async def list_tool_defs(self, names: list[str]) -> list[dict[str, Any]]:
         """Fetches the live tool schemas from the MCP server for the given
         tool names and translates them into OpenAI-style function-calling
-        definitions for agent/brain.py. MCP tool `inputSchema` is already
-        JSON Schema, so this is a near-direct passthrough into the
+        definitions for agent/brain.py. `mcp.types.Tool.input_schema` is
+        already JSON Schema (note: snake_case attribute, not `inputSchema`
+        -- the mcp package's Python bindings differ from the wire format's
+        camelCase), so this is a near-direct passthrough into the
         `{"type": "function", "function": {...}}` shape Featherless expects.
         """
         assert self.session is not None, "use `async with AlpacaMcpClient(...)`"
@@ -114,7 +137,7 @@ class AlpacaMcpClient:
                     "function": {
                         "name": tool.name,
                         "description": tool.description or "",
-                        "parameters": tool.inputSchema or {"type": "object", "properties": {}},
+                        "parameters": tool.input_schema or {"type": "object", "properties": {}},
                     },
                 }
             )
@@ -122,9 +145,10 @@ class AlpacaMcpClient:
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         """Calls the MCP tool and returns plain Python data (dict/list/str),
-        not the raw CallToolResult -- every typed wrapper method below, and
-        every caller elsewhere in the codebase, assumes `.get()`/indexing on
-        the returned value works directly.
+        with alpaca-mcp-server's `{"data": ...}` envelope already unwrapped --
+        every typed wrapper method below, and every caller elsewhere in the
+        codebase, assumes `.get()`/indexing on the returned value works
+        directly against the real payload.
         """
         assert self.session is not None, "use `async with AlpacaMcpClient(...)`"
         result = await self.session.call_tool(name, arguments)
@@ -133,24 +157,87 @@ class AlpacaMcpClient:
         return _extract_result(result)
 
     async def get_account(self) -> dict:
-        return await self.call_tool("get_account", {})
+        return await self.call_tool("get_account_info", {})
 
     async def get_positions(self) -> list[dict]:
-        return await self.call_tool("get_positions", {})
+        # data shape: {"result": [...]}
+        data = await self.call_tool("get_all_positions", {})
+        return (data or {}).get("result", []) if isinstance(data, dict) else []
 
-    async def get_option_chain(self, underlying: str) -> list[dict]:
-        return await self.call_tool("get_option_chain", {"underlying_symbol": underlying})
+    async def get_option_contracts(
+        self, underlying: str, expiration_gte: str, expiration_lte: str,
+        strike_gte: float | None = None, strike_lte: float | None = None, limit: int = 1000,
+    ) -> dict[str, dict]:
+        """Contract metadata (strike, expiration, type, open_interest) keyed
+        by OCC symbol -- distinct from get_option_chain, which carries market
+        data (quotes) but no strike/expiration/OI fields.
 
-    async def get_option_snapshot(self, occ_symbol: str) -> dict:
-        return await self.call_tool("get_option_snapshot", {"symbol_or_symbols": occ_symbol})
+        A strike band is required in practice, not just an expiration window:
+        liquid underlyings like SPY have *daily* expirations, so a 45-day
+        window can hold thousands of contracts across all strikes -- more
+        than the API `limit` -- and results get silently truncated to only
+        the first couple of expiration dates (verified live: an unbounded
+        SPY query returned only 2 distinct expirations despite spanning 49
+        days). Restricting to strikes near the underlying, which is all a
+        delta-targeted strategy would ever use anyway, keeps each request
+        well under the limit.
+        """
+        params: dict[str, Any] = {
+            "underlying_symbols": underlying,
+            "expiration_date_gte": expiration_gte,
+            "expiration_date_lte": expiration_lte,
+            "limit": limit,
+        }
+        if strike_gte is not None:
+            params["strike_price_gte"] = strike_gte
+        if strike_lte is not None:
+            params["strike_price_lte"] = strike_lte
+        data = await self.call_tool("get_option_contracts", params)
+        contracts = (data or {}).get("option_contracts", []) if isinstance(data, dict) else []
+        return {c["symbol"]: c for c in contracts}
+
+    async def get_option_chain(
+        self, underlying: str, expiration_gte: str, expiration_lte: str,
+        strike_gte: float | None = None, strike_lte: float | None = None, limit: int = 1000,
+    ) -> dict[str, dict]:
+        """Market-data snapshots (latestQuote/latestTrade/dailyBar) keyed by
+        OCC symbol. No greeks/IV on the free indicative feed -- see
+        data/option_quotes.py for how these get combined with
+        get_option_contracts + Black-Scholes into a full OptionQuote. See
+        get_option_contracts for why the strike band matters."""
+        params: dict[str, Any] = {
+            "underlying_symbol": underlying,
+            "expiration_date_gte": expiration_gte,
+            "expiration_date_lte": expiration_lte,
+            "limit": limit,
+        }
+        if strike_gte is not None:
+            params["strike_price_gte"] = strike_gte
+        if strike_lte is not None:
+            params["strike_price_lte"] = strike_lte
+        data = await self.call_tool("get_option_chain", params)
+        return (data or {}).get("snapshots", {}) if isinstance(data, dict) else {}
+
+    async def get_option_snapshot(self, occ_symbols: list[str]) -> dict[str, dict]:
+        data = await self.call_tool("get_option_snapshot", {"symbols": ",".join(occ_symbols)})
+        return (data or {}).get("snapshots", {}) if isinstance(data, dict) else {}
 
     async def get_stock_bars(self, symbol: str, timeframe: str, start: str, end: str) -> list[dict]:
-        return await self.call_tool(
-            "get_stock_bars", {"symbol": symbol, "timeframe": timeframe, "start": start, "end": end}
+        # data shape: {"bars": {"<SYMBOL>": [...]}, "next_page_token": ...}.
+        # feed="iex" is required: the default feed is SIP, and a paper
+        # account with no market-data subscription gets a 403
+        # ("subscription does not permit querying recent SIP data") on any
+        # request touching recent dates -- verified live. IEX is the free
+        # tier feed and is what this whole codebase should assume throughout.
+        data = await self.call_tool(
+            "get_stock_bars",
+            {"symbols": symbol, "timeframe": timeframe, "start": start, "end": end, "feed": "iex"},
         )
+        return (data or {}).get("bars", {}).get(symbol, []) if isinstance(data, dict) else []
 
     async def get_news(self, symbols: list[str], limit: int = 10) -> list[dict]:
-        return await self.call_tool("get_news", {"symbols": symbols, "limit": limit})
+        data = await self.call_tool("get_news", {"symbols": ",".join(symbols), "limit": limit})
+        return (data or {}).get("news", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
 
     async def get_clock(self) -> dict:
         return await self.call_tool("get_clock", {})
@@ -159,10 +246,13 @@ class AlpacaMcpClient:
         return await self.call_tool("get_calendar", {"start": start, "end": end})
 
     async def place_option_order(self, legs: list[dict], qty: int, client_order_id: str) -> dict:
+        # qty and each leg's ratio_qty must be strings per the tool's schema
+        # (verified live); order_class is auto-inferred when legs are given,
+        # so it's deliberately omitted rather than guessed.
+        string_legs = [{**leg, "ratio_qty": str(leg.get("ratio_qty", 1))} for leg in legs]
         return await self.call_tool(
             "place_option_order",
-            {"legs": legs, "qty": qty, "order_class": "mleg" if len(legs) > 1 else "simple",
-             "client_order_id": client_order_id},
+            {"legs": string_legs, "qty": str(qty), "client_order_id": client_order_id},
         )
 
     async def place_stock_order(self, symbol: str, side: str, qty: int, client_order_id: str) -> dict:
@@ -171,42 +261,13 @@ class AlpacaMcpClient:
         is deterministic code, not an LLM-exposed tool."""
         return await self.call_tool(
             "place_stock_order",
-            {"symbol": symbol, "side": side, "qty": qty, "order_type": "market",
+            {"symbol": symbol, "side": side, "qty": str(qty), "type": "market",
              "time_in_force": "day", "client_order_id": client_order_id},
         )
 
     async def get_orders(self, status: str = "open") -> list[dict]:
-        return await self.call_tool("get_orders", {"status": status})
+        data = await self.call_tool("get_orders", {"status": status})
+        return (data or {}).get("result", []) if isinstance(data, dict) else []
 
     async def cancel_order(self, order_id: str) -> dict:
-        return await self.call_tool("cancel_order", {"order_id": order_id})
-
-
-def parse_option_chain(raw_chain: list[dict], underlying: str) -> list[OptionQuote]:
-    """Converts the alpaca-mcp-server get_option_chain response into our
-    internal OptionQuote type used throughout strategy/screener.py.
-    Kept in one place so a server-side response-shape change only touches
-    this function.
-    """
-    quotes: list[OptionQuote] = []
-    for row in raw_chain:
-        exp = row["expiration_date"]
-        if isinstance(exp, str):
-            exp = datetime.strptime(exp, "%Y-%m-%d").date()
-        greeks = row.get("greeks") or {}
-        quotes.append(
-            OptionQuote(
-                occ_symbol=row["symbol"],
-                underlying=underlying,
-                strike=float(row["strike_price"]),
-                expiration=exp,
-                option_type="call" if str(row["type"]).lower().startswith("c") else "put",
-                bid=float(row.get("bid_price") or 0.0),
-                ask=float(row.get("ask_price") or 0.0),
-                delta=float(greeks.get("delta") or 0.0),
-                vega=float(greeks.get("vega") or 0.0),
-                open_interest=int(row.get("open_interest") or 0),
-                iv=float(row.get("implied_volatility") or 0.0),
-            )
-        )
-    return quotes
+        return await self.call_tool("cancel_order_by_id", {"order_id": order_id})

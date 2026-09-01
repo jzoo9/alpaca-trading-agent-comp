@@ -56,7 +56,7 @@ def load_config(config_path: Path | None = None, env_path: Path | None = None) -
         alpaca_secret_key=_require("ALPACA_SECRET_KEY"),
         alpaca_paper=os.environ.get("ALPACA_PAPER_TRADE", "true").lower() == "true",
         featherless_api_key=_require("FEATHERLESS_API_KEY"),
-        featherless_model=os.environ.get("FEATHERLESS_MODEL", "Qwen/Qwen3-30B-A3B-Instruct-2507"),
+        featherless_model=os.environ.get("FEATHERLESS_MODEL", "moonshotai/Kimi-K2-Instruct"),
     )
 
     path = config_path or REPO_ROOT / "config.yaml"

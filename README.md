@@ -34,10 +34,13 @@ cp .env.example .env
 ```
 
 Get a Featherless API key at https://featherless.ai (Settings -> API Keys).
-`FEATHERLESS_MODEL` defaults to a Qwen3 model with native tool-calling
-support -- verify the exact slug against https://featherless.ai/models
-before running; the two model families confirmed to support tool calling
-well are the **Qwen3 family** and **moonshotai/Kimi-K2-Instruct**.
+`FEATHERLESS_MODEL` defaults to `moonshotai/Kimi-K2-Instruct`, verified
+live to handle this project's tool-calling shape reliably in ~2-3s per
+call. A Qwen3-30B-A3B-Instruct-2507 model, despite being in Featherless's
+documented tool-calling-capable family, either 500'd or hung indefinitely
+once a realistic tool schema was attached -- if you switch models, re-verify
+tool-calling latency/reliability directly before trusting it in the daemon
+(a plain completion succeeding is not evidence tool-calling works).
 
 Strategy/universe/risk-limit constants live in `config.yaml` -- all the
 numeric risk gates described in `WRITEUP.md` are there, not hardcoded.

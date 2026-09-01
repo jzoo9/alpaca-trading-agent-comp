@@ -29,6 +29,18 @@ logger = logging.getLogger(__name__)
 
 FEATHERLESS_BASE_URL = "https://api.featherless.ai/v1"
 
+# The openai SDK has no default request timeout when none is passed, so a
+# stalled response from the provider blocks the cycle indefinitely -- this
+# was observed live: the originally-configured Qwen3 model returned in ~1s
+# for a plain completion but hung indefinitely (no response, no error) the
+# moment `tools=` was attached with a realistic schema payload, and 500'd
+# outright on a minimal one. moonshotai/Kimi-K2-Instruct was verified live
+# to handle the same tool-calling shape reliably in ~2-3s and is now the
+# default (see config/.env.example) -- this timeout is a second line of
+# defense so a bad response degrades the cycle rather than stalling the
+# daemon.
+REQUEST_TIMEOUT_SECONDS = 60.0
+
 CYCLE_PROMPT = (
     "Begin this cycle's trade review. Call list_candidates and get_portfolio_state "
     "first, then check news for any candidate underlyings before deciding."
@@ -67,7 +79,12 @@ async def run_cycle(config: Config, state: CycleState) -> str:
     alpaca_tool_names = {d["function"]["name"] for d in alpaca_tool_defs}
     tool_schemas = [t.schema for t in quant_tools.values()] + alpaca_tool_defs
 
-    client = AsyncOpenAI(base_url=FEATHERLESS_BASE_URL, api_key=config.creds.featherless_api_key)
+    client = AsyncOpenAI(
+        base_url=FEATHERLESS_BASE_URL,
+        api_key=config.creds.featherless_api_key,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+        max_retries=1,
+    )
 
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
