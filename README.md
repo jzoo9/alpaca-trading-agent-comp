@@ -1,10 +1,12 @@
 # Autonomous Options-Selling Agent (Alpaca Paper Trading)
 
 A volatility-risk-premium-harvesting options agent: sells defined-risk credit
-spreads and iron condors on a curated ETF + quality-large-cap universe,
-gated by deterministic risk rules, with a bounded Claude reasoning layer
-for catalyst awareness and trade rationale. See `WRITEUP.md` for the full
-one-page summary of strategy, risk gates, and infrastructure.
+spreads and iron condors on a curated, sector-diversified universe of liquid
+ETFs and quality large-caps (22 symbols across tech, financials, healthcare,
+consumer, energy, and gold), gated by deterministic risk rules, with a bounded
+LLM reasoning layer for catalyst awareness and trade rationale. See
+`WRITEUP.md` for the full one-page summary of strategy, risk gates, and
+infrastructure.
 
 ## 1. Prerequisites
 
@@ -52,7 +54,7 @@ at the top of that file / the "Known limitations" section of `WRITEUP.md`).
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest tests/ -q                      # 74 unit tests over signals/gates/sizing/screener/exits/hedge
+pytest tests/ -q                      # 97 unit tests: signals/gates/sizing/screener/exits/hedge/black-scholes/universe
 ```
 
 ## 5. Verify the account is wired up correctly
