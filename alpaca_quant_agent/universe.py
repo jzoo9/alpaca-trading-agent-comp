@@ -26,9 +26,16 @@ CORE_ETFS: tuple[UniverseEntry, ...] = (
     UniverseEntry("SPY", "etf", "Broad market beta, deepest options liquidity on the exchange."),
     UniverseEntry("QQQ", "etf", "Large-cap tech/growth beta, very liquid options chain."),
     UniverseEntry("IWM", "etf", "Small-cap beta, diversifies away from large-cap-only exposure."),
+    # Sector ETFs deliberately span buckets other than mega-cap tech, so the
+    # concentration gate (CORRELATION_BUCKETS) actually has room to diversify
+    # the book instead of everything collapsing into one tech-beta bet.
+    UniverseEntry("XLF", "etf", "Financials sector beta; diversifies away from tech, very liquid options."),
+    UniverseEntry("XLE", "etf", "Energy sector beta; low correlation to tech, liquid chain."),
+    UniverseEntry("GLD", "etf", "Gold; a genuine non-equity diversifier with a deep, liquid options market."),
 )
 
 QUALITY_SINGLE_NAMES: tuple[UniverseEntry, ...] = (
+    # --- mega-cap tech (original 7) ---
     UniverseEntry("AAPL", "single_name", "Profitable, low leverage, dominant liquid options chain."),
     UniverseEntry("MSFT", "single_name", "High-quality balance sheet, durable cash flows, diversified revenue."),
     UniverseEntry("NVDA", "single_name", "Structural growth leader; included for premium/IV richness despite higher vol."),
@@ -36,6 +43,19 @@ QUALITY_SINGLE_NAMES: tuple[UniverseEntry, ...] = (
     UniverseEntry("AMZN", "single_name", "Market leader in two durable franchises (retail + AWS cash engine)."),
     UniverseEntry("META", "single_name", "High margin, strong free cash flow, buyback discipline."),
     UniverseEntry("AVGO", "single_name", "Profitable, diversified semis/software cash flows, low relative volatility."),
+    # --- financials ---
+    UniverseEntry("JPM", "single_name", "Best-in-class bank, strong ROE, deep liquid options."),
+    UniverseEntry("V", "single_name", "Asset-light payments network, high margin, low leverage, durable moat."),
+    UniverseEntry("MA", "single_name", "Payments duopoly with Visa; high margin, strong free cash flow."),
+    # --- healthcare ---
+    UniverseEntry("LLY", "single_name", "Profitable pharma leader, durable pipeline, liquid chain."),
+    UniverseEntry("UNH", "single_name", "Diversified managed-care leader, steady cash flows, deep options."),
+    # --- consumer ---
+    UniverseEntry("COST", "single_name", "Membership-model retailer, low volatility, consistent profitability."),
+    UniverseEntry("HD", "single_name", "Category-leading retailer, strong margins and cash returns."),
+    UniverseEntry("WMT", "single_name", "Defensive staple retailer, low beta, very liquid options."),
+    # --- energy ---
+    UniverseEntry("XOM", "single_name", "Integrated energy major, strong balance sheet; diversifies sector exposure."),
 )
 
 ALL_ENTRIES: tuple[UniverseEntry, ...] = CORE_ETFS + QUALITY_SINGLE_NAMES
@@ -60,6 +80,11 @@ CORRELATION_BUCKETS: dict[str, tuple[str, ...]] = {
     "megacap_tech": ("QQQ", "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "AVGO"),
     "broad_market": ("SPY",),
     "small_cap": ("IWM",),
+    "financials": ("XLF", "JPM", "V", "MA"),
+    "healthcare": ("LLY", "UNH"),
+    "consumer": ("COST", "HD", "WMT"),
+    "energy": ("XLE", "XOM"),
+    "gold": ("GLD",),
 }
 
 _SYMBOL_TO_BUCKET: dict[str, str] = {

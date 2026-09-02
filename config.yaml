@@ -6,11 +6,19 @@ account:
   starting_balance: 100000.0
 
 universe:
+  # NOTE: alpaca_quant_agent/universe.py is the source of truth consumed by the
+  # cycle (ALL_ENTRIES); this block is kept in sync for reference. Expanded from
+  # 10 -> 22 names across multiple sectors so that (a) more symbols clear the
+  # IV-rank entry gate on any given day, and (b) the concentration gate has
+  # genuinely uncorrelated buckets to diversify across (see CORRELATION_BUCKETS).
   core_etfs:
     - SPY
     - QQQ
     - IWM
-  # Curated quality / low-volatility mega-caps eligible for Sleeve A + Sleeve B.
+    - XLF   # financials sector
+    - XLE   # energy sector
+    - GLD   # gold (non-equity diversifier)
+  # Curated quality / liquid names eligible for Sleeve A + Sleeve B.
   # Rationale for each lives in alpaca_quant_agent/universe.py (not duplicated here).
   quality_single_names:
     - AAPL
@@ -20,10 +28,24 @@ universe:
     - AMZN
     - META
     - AVGO
+    - JPM    # financials
+    - V      # financials
+    - MA     # financials
+    - LLY    # healthcare
+    - UNH    # healthcare
+    - COST   # consumer
+    - HD     # consumer
+    - WMT    # consumer
+    - XOM    # energy
 
 signals:
   iv_rank_lookback_days: 63
-  iv_rank_entry_threshold: 40   # percentile, sleeve A entries require IV rank >= this
+  # DEMO SETTING: relaxed from 40 -> 30 so the agent will actually open
+  # positions in calmer vol regimes for demonstration. Lowering this does NOT
+  # increase per-trade max loss (still capped at 2%/trade); it trades a thinner
+  # VRP edge for more frequent entries. Production value is 40+. Do not go
+  # below ~20 -- that is selling genuinely cheap volatility with little edge.
+  iv_rank_entry_threshold: 30   # percentile, sleeve A entries require IV rank >= this
   iv_rank_earnings_threshold: 80  # percentile, sleeve B entries require IV rank >= this
   momentum_lookback_days: 252   # ~12 months
   momentum_skip_days: 21        # skip most recent month (12-1 momentum)
