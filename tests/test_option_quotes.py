@@ -3,7 +3,7 @@ from datetime import date
 import pytest
 
 from alpaca_quant_agent.data.option_quotes import build_option_quotes
-from alpaca_quant_agent.strategy.black_scholes import bs_price
+from alpaca_quant_agent.strategy.black_scholes import bs_price, bs_vega
 
 TODAY = date(2026, 9, 1)
 EXPIRATION = "2026-10-16"  # 45 days out
@@ -43,6 +43,27 @@ def test_builds_quote_with_recovered_iv_and_sane_delta():
     assert q.strike == 490.0
     assert q.option_type == "put"
     assert q.open_interest == 500
+
+
+def test_vega_is_scaled_per_1_vol_point_not_per_100pct_move():
+    # Regression test: bs_vega() returns $ sensitivity per 1.00 (100%)
+    # absolute vol change; build_option_quotes must convert this to the
+    # conventional "per 1 vol point (1%)" figure that risk_gates.py's
+    # portfolio_vega_cap_pct is calibrated against -- i.e. divide by 100.
+    # A prior bug skipped this conversion, making every portfolio vega
+    # check ~100x too strict and silently rejecting every real candidate.
+    S, K, T, r = 500.0, 490.0, 45 / 365.0, 0.045
+    true_iv = 0.20
+    fair_price = bs_price("put", S, K, T, r, true_iv)
+    raw_vega = bs_vega(S, K, T, r, true_iv)
+
+    contracts = {"X": make_contract("X", 490.0, "put")}
+    chain = {"X": make_snapshot(fair_price - 0.02, fair_price + 0.02)}
+
+    quotes = build_option_quotes(contracts, chain, S, TODAY, risk_free_rate=r)
+    assert len(quotes) == 1
+    assert quotes[0].vega == pytest.approx(raw_vega / 100.0, rel=0.05)
+    assert quotes[0].vega == pytest.approx(raw_vega * 0.01, rel=0.05)  # not raw_vega itself
 
 
 def test_skips_contract_with_no_matching_chain_entry():

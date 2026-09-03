@@ -46,6 +46,27 @@ def test_select_expiration_none_when_out_of_range():
     assert select_expiration(expirations, today, dte_min=30, dte_max=45) is None
 
 
+def test_select_expiration_prefers_standard_monthly_over_closer_weekly():
+    # Oct 16, 2026 is the 3rd Friday of October (standard monthly cycle,
+    # where real open interest concentrates for single names). Oct 12 is
+    # closer to the DTE midpoint but is an arbitrary weekly -- the monthly
+    # should win even though it's not the nearest-to-midpoint date.
+    today = date(2026, 9, 1)
+    expirations = [date(2026, 10, 12), date(2026, 10, 16), date(2026, 10, 23)]
+    chosen = select_expiration(expirations, today, dte_min=30, dte_max=45)
+    assert chosen == date(2026, 10, 16)
+
+
+def test_select_expiration_falls_back_to_midpoint_when_no_monthly_in_range():
+    # None of these are a 3rd Friday -> falls back to nearest-to-midpoint.
+    # Oct 8 is 37 days out (0.5 from the 37.5 midpoint), Oct 14 is 43 days
+    # out (5.5 away) -- Oct 8 should win unambiguously.
+    today = date(2026, 9, 1)
+    expirations = [date(2026, 10, 8), date(2026, 10, 14)]
+    chosen = select_expiration(expirations, today, dte_min=30, dte_max=45)
+    assert chosen == date(2026, 10, 8)
+
+
 def test_select_short_strike_finds_closest_to_target_delta():
     chain = make_chain()
     short = select_short_strike(chain, "put", target_delta=0.20, band=0.10)

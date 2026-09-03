@@ -65,7 +65,11 @@ def build_option_quotes(
             continue
 
         delta = bs_delta(option_type, underlying_price, strike, T, risk_free_rate, iv)
-        vega = bs_vega(underlying_price, strike, T, risk_free_rate, iv)
+        # bs_vega() returns $ sensitivity per 1.00 (100%) absolute change in
+        # vol; the conventional "vega" quants report and cap against is per
+        # 1 vol *point* (1%) -- divide by 100 to match that convention (this
+        # is what risk_gates.portfolio_vega_cap_pct is calibrated against).
+        vega = bs_vega(underlying_price, strike, T, risk_free_rate, iv) / 100.0
 
         quotes.append(
             OptionQuote(

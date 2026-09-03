@@ -85,13 +85,27 @@ class CandidateTrade:
         )
 
 
+def _is_standard_monthly(d: date) -> bool:
+    """True for the 3rd Friday of the month -- the standard monthly options
+    cycle, where open interest concentrates for most single names (unlike
+    SPY/QQQ-style underlyings with deep daily-expiration liquidity)."""
+    return d.weekday() == 4 and 15 <= d.day <= 21
+
+
 def select_expiration(expirations: list[date], today: date, dte_min: int, dte_max: int) -> date | None:
     in_range = [e for e in expirations if dte_min <= (e - today).days <= dte_max]
     if not in_range:
         return None
-    # Prefer the expiration closest to the midpoint of the target DTE window.
+    # Prefer a standard monthly expiration if one falls in range -- that's
+    # where real open interest concentrates for single names, so picking an
+    # arbitrary nearest-to-midpoint date (e.g. a low-volume weekly) tends to
+    # land on contracts that fail the liquidity gates even when the
+    # underlying itself is liquid. Falls back to nearest-to-midpoint (the
+    # prior behavior) when no monthly date is available in the window.
     target_dte = (dte_min + dte_max) / 2
-    return min(in_range, key=lambda e: abs((e - today).days - target_dte))
+    monthly = [e for e in in_range if _is_standard_monthly(e)]
+    pool = monthly if monthly else in_range
+    return min(pool, key=lambda e: abs((e - today).days - target_dte))
 
 
 def select_short_strike(
