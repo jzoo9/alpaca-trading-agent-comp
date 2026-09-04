@@ -9,7 +9,7 @@ import json
 import logging
 from datetime import date, datetime, timedelta
 
-from alpaca_quant_agent import ledger, universe
+from alpaca_quant_agent import control, ledger, universe
 from alpaca_quant_agent.agent.brain import run_cycle as run_llm_cycle
 from alpaca_quant_agent.agent.tools import CycleState
 from alpaca_quant_agent.config import Config
@@ -82,6 +82,43 @@ async def _current_close_value(client: AlpacaMcpClient, legs_json: str) -> float
     return total * 100.0
 
 
+async def _close_position_row(
+    client: AlpacaMcpClient, db_path: str, row: dict, current_value: float, reason: str, dry_run: bool = False
+) -> str:
+    """Places the closing order for one open-position ledger row and logs it.
+    Shared by the deterministic per-cycle exit check and the dashboard's
+    manual-close action -- both just need a reason string and a valuation."""
+    legs = json.loads(row["legs_json"])
+    closing_legs = [{"symbol": leg["symbol"], "side": "buy" if leg["side"] == "sell" else "sell", "ratio_qty": 1} for leg in legs]
+
+    if dry_run:
+        ledger.log_decision(
+            db_path, candidate_id=None, symbol=row["symbol"],
+            decision="dry_run_would_close", detail=f"reason={reason}, current_value={current_value}",
+        )
+        logger.info("[DRY RUN] would close %s (%s) reason=%s", row["symbol"], row["position_group"], reason)
+        return f"[DRY RUN] would close {row['symbol']} ({row['position_group']}) reason={reason}"
+
+    client_order_id = f"close-{row['position_group'][:8]}"
+    order = await client.place_option_order(closing_legs, row["contracts"], client_order_id)
+    ledger.log_trade(
+        db_path,
+        candidate_id=None,
+        position_group=row["position_group"],
+        symbol=row["symbol"],
+        sleeve=row["sleeve"],
+        strategy_type=row["strategy_type"],
+        action="close",
+        contracts=row["contracts"],
+        credit_or_debit=current_value,
+        legs=closing_legs,
+        rationale=reason,
+        order_id=order.get("id") if isinstance(order, dict) else None,
+    )
+    logger.info("closed %s (%s) reason=%s", row["symbol"], row["position_group"], reason)
+    return f"Closed {row['symbol']} ({row['position_group']}) reason={reason}"
+
+
 async def _manage_open_positions(client: AlpacaMcpClient, db_path: str, today: date, config: dict, dry_run: bool = False) -> None:
     for row in ledger.open_positions(db_path):
         expiration = datetime.strptime(row["expiration"], "%Y-%m-%d").date() if row["expiration"] else today
@@ -105,34 +142,23 @@ async def _manage_open_positions(client: AlpacaMcpClient, db_path: str, today: d
         if not decision.should_close:
             continue
 
-        legs = json.loads(row["legs_json"])
-        closing_legs = [{"symbol": leg["symbol"], "side": "buy" if leg["side"] == "sell" else "sell", "ratio_qty": 1} for leg in legs]
+        await _close_position_row(client, db_path, row, current_value, f"deterministic exit: {decision.reason}", dry_run=dry_run)
 
-        if dry_run:
-            ledger.log_decision(
-                db_path, candidate_id=None, symbol=row["symbol"],
-                decision="dry_run_would_close", detail=f"reason={decision.reason}, current_value={current_value}",
-            )
-            logger.info("[DRY RUN] would close %s (%s) reason=%s", row["symbol"], row["position_group"], decision.reason)
-            continue
 
-        client_order_id = f"close-{row['position_group'][:8]}"
-        order = await client.place_option_order(closing_legs, row["contracts"], client_order_id)
-        ledger.log_trade(
-            db_path,
-            candidate_id=None,
-            position_group=row["position_group"],
-            symbol=row["symbol"],
-            sleeve=row["sleeve"],
-            strategy_type=row["strategy_type"],
-            action="close",
-            contracts=row["contracts"],
-            credit_or_debit=current_value,
-            legs=closing_legs,
-            rationale=f"deterministic exit: {decision.reason}",
-            order_id=order.get("id") if isinstance(order, dict) else None,
-        )
-        logger.info("closed %s (%s) reason=%s", row["symbol"], row["position_group"], decision.reason)
+async def close_position_manually(config: Config, position_group: str, dry_run: bool = True) -> str:
+    """Dashboard-triggered manual close of one specific open position,
+    bypassing the deterministic exit rules (evaluate_exit) entirely -- this
+    is a human override, so no reason beyond "operator requested" is needed.
+    Raises ValueError if the position isn't open (already closed / unknown)."""
+    row = ledger.open_position_by_group(config.db_path, position_group)
+    if row is None:
+        raise ValueError(f"no open position found for position_group={position_group!r}")
+
+    async with AlpacaMcpClient(config) as client:
+        current_value = await _current_close_value(client, row["legs_json"])
+        if current_value is None:
+            raise RuntimeError(f"no live quote available for {row['symbol']} ({position_group}); cannot value the close")
+        return await _close_position_row(client, config.db_path, row, current_value, "manual close (dashboard)", dry_run=dry_run)
 
 
 def _screen_symbol(
@@ -295,6 +321,13 @@ async def run_one_cycle(config: Config, dry_run: bool = False) -> str:
             ledger.log_decision(config.db_path, candidate_id=None, symbol=None, decision="no_candidates", detail=f"circuit breaker halt: {reason}")
             logger.warning("circuit breaker halting new entries: %s", reason)
             return f"No new entries this cycle -- circuit breaker: {reason}"
+
+        halt_state = control.get_halt_state(config.db_path)
+        if halt_state.halted:
+            detail = f"manual kill switch active (dashboard): {halt_state.reason}" if halt_state.reason else "manual kill switch active (dashboard)"
+            ledger.log_decision(config.db_path, candidate_id=None, symbol=None, decision="no_candidates", detail=detail)
+            logger.warning(detail)
+            return f"No new entries this cycle -- {detail}"
 
         exposure_multiplier = await _exposure_multiplier(client, today, config.raw)
         if exposure_multiplier <= 0.0:

@@ -138,6 +138,33 @@ def open_positions(db_path: str) -> list[dict]:
         return [dict(zip(columns, row)) for row in rows]
 
 
+def open_position_by_group(db_path: str, position_group: str) -> dict | None:
+    """Single open (not-yet-closed) position by its position_group, for the
+    dashboard's manual-close action. Same reconstruction rule as
+    open_positions(): an 'open' row with no matching 'close' row yet."""
+    with connect(db_path) as conn:
+        row = conn.execute(
+            """SELECT t.position_group, t.symbol, t.sleeve, t.strategy_type, t.contracts,
+                      t.credit_or_debit AS credit_received, t.max_loss, t.net_delta, t.net_vega,
+                      t.expiration, t.days_to_earnings, t.legs_json, t.created_at AS opened_at
+               FROM trades t
+               WHERE t.action = 'open' AND t.position_group = ?
+                 AND NOT EXISTS (
+                     SELECT 1 FROM trades c
+                     WHERE c.action = 'close' AND c.position_group = t.position_group
+                 )""",
+            (position_group,),
+        ).fetchone()
+        if row is None:
+            return None
+        columns = [
+            "position_group", "symbol", "sleeve", "strategy_type", "contracts",
+            "credit_received", "max_loss", "net_delta", "net_vega", "expiration",
+            "days_to_earnings", "legs_json", "opened_at",
+        ]
+        return dict(zip(columns, row))
+
+
 def log_decision(db_path: str, *, candidate_id: str | None, symbol: str | None, decision: str, detail: str) -> None:
     with connect(db_path) as conn:
         conn.execute(

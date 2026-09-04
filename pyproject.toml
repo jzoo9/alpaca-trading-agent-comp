@@ -30,3 +30,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["alpaca_quant_agent*"]
+
+[tool.setuptools.package-data]
+alpaca_quant_agent = ["dashboard_static/*.html"]

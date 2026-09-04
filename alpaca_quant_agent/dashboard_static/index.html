@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VRP Agent — Portfolio Dashboard</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: #12161f;
+    --panel-border: #1f2531;
+    --text: #e6e9ef;
+    --text-dim: #8b93a7;
+    --text-faint: #5a6178;
+    --green: #3ddc97;
+    --red: #ff5d5d;
+    --amber: #f5b942;
+    --blue: #5b9dff;
+    --accent: #7c8cff;
+    --mono: "SF Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+  }
+  body { padding: 24px 28px 60px; }
+  a { color: var(--blue); }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 22px;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+    animation: pulse 2s infinite;
+  }
+  .brand .dot.stale { background: var(--text-faint); box-shadow: none; animation: none; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .brand h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: 0.2px; }
+  .brand .sub { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+
+  .status-chip {
+    font-size: 11px; color: var(--text-dim);
+    font-family: var(--mono);
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    padding: 6px 12px; border-radius: 20px;
+    display: flex; align-items: center; gap: 8px;
+  }
+
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .kpi {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 16px 18px;
+  }
+  .kpi .label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px;
+    color: var(--text-dim); margin-bottom: 8px;
+  }
+  .kpi .value {
+    font-family: var(--mono);
+    font-size: 24px; font-weight: 600;
+    color: var(--text);
+  }
+  .kpi .sub-value { font-size: 12px; color: var(--text-dim); margin-top: 4px; font-family: var(--mono); }
+  .pos { color: var(--green); }
+  .neg { color: var(--red); }
+  .neutral { color: var(--text-dim); }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1.6fr 1fr;
+    gap: 14px;
+    margin-bottom: 14px;
+  }
+  @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 18px 20px;
+  }
+  .panel h2 {
+    font-size: 13px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.6px; color: var(--text-dim);
+    margin: 0 0 14px 0;
+  }
+  .panel h2 .count { color: var(--text-faint); font-weight: 400; text-transform: none; letter-spacing: 0; }
+
+  #chartWrap { position: relative; height: 240px; }
+  canvas { width: 100%; height: 100%; display: block; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th {
+    text-align: left; font-weight: 500; color: var(--text-faint);
+    text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.4px;
+    padding: 6px 8px; border-bottom: 1px solid var(--panel-border);
+  }
+  td { padding: 8px 8px; border-bottom: 1px solid #191d27; font-family: var(--mono); }
+  tr:last-child td { border-bottom: none; }
+  td.sym { font-family: var(--sans); font-weight: 600; }
+  .tag {
+    display: inline-block; padding: 2px 7px; border-radius: 5px;
+    font-size: 10.5px; font-family: var(--sans); font-weight: 600;
+  }
+  .tag-A { background: rgba(91,157,255,0.15); color: var(--blue); }
+  .tag-B { background: rgba(245,185,66,0.15); color: var(--amber); }
+  .tag-open { background: rgba(61,220,151,0.15); color: var(--green); }
+  .tag-close { background: rgba(255,93,93,0.12); color: var(--red); }
+
+  .bars { display: flex; flex-direction: column; gap: 14px; }
+  .bar-row .bar-label { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; }
+  .bar-row .bar-label .name { color: var(--text-dim); }
+  .bar-row .bar-label .val { font-family: var(--mono); }
+  .bar-track { height: 7px; background: #1a1f2b; border-radius: 4px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s ease; }
+  .fill-ok { background: linear-gradient(90deg, #2d9d70, var(--green)); }
+  .fill-warn { background: linear-gradient(90deg, #b8891f, var(--amber)); }
+  .fill-danger { background: linear-gradient(90deg, #c23c3c, var(--red)); }
+
+  .feed { max-height: 420px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+  .feed-item { padding: 9px 10px; border-radius: 7px; background: #0e121a; border: 1px solid #191d27; }
+  .feed-item .fi-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px; }
+  .feed-item .fi-decision { font-size: 12px; font-weight: 600; }
+  .feed-item .fi-time { font-size: 10.5px; color: var(--text-faint); font-family: var(--mono); }
+  .feed-item .fi-detail { font-size: 11.5px; color: var(--text-dim); line-height: 1.4; word-break: break-word; }
+  .d-llm_approved, .d-open { color: var(--green); }
+  .d-gate_rejected, .d-llm_skipped { color: var(--text-dim); }
+  .d-no_candidates { color: var(--text-faint); }
+  .d-hedge_executed, .d-hedge_noted { color: var(--blue); }
+  .d-close { color: var(--red); }
+
+  .empty-state {
+    text-align: center; padding: 60px 20px; color: var(--text-dim);
+  }
+  .empty-state h3 { color: var(--text); font-size: 16px; margin-bottom: 8px; }
+  .empty-state code {
+    background: #0e121a; padding: 2px 6px; border-radius: 4px;
+    font-family: var(--mono); font-size: 12px; color: var(--accent);
+  }
+
+  .empty-row td { text-align: center; color: var(--text-faint); padding: 20px; }
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: #232a38; border-radius: 4px; }
+
+  /* --- control center --- */
+  .ctrl-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px; }
+  .halt-banner { font-size: 12px; color: var(--text-dim); display: flex; align-items: center; gap: 8px; }
+  .halt-banner .hb-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+  .halt-banner.halted { color: var(--amber); }
+  .halt-banner.halted .hb-dot { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+  .ctrl-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+  .btn {
+    font-family: var(--sans); font-size: 12.5px; font-weight: 600;
+    padding: 9px 16px; border-radius: 7px; border: 1px solid var(--panel-border);
+    background: #171c27; color: var(--text); cursor: pointer;
+  }
+  .btn:hover { background: #1c2230; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: #0b0e14; }
+  .btn-primary:hover { background: #8f9dff; }
+  .btn-danger { background: transparent; border-color: rgba(255,93,93,0.4); color: var(--red); }
+  .btn-danger:hover { background: rgba(255,93,93,0.1); }
+  .btn-warn { background: transparent; border-color: rgba(245,185,66,0.4); color: var(--amber); }
+  .btn-warn:hover { background: rgba(245,185,66,0.1); }
+  .btn-sm { padding: 4px 10px; font-size: 11px; border-radius: 5px; }
+  .action-log {
+    margin-top: 12px; padding: 10px 12px; border-radius: 7px;
+    background: #0e121a; border: 1px solid #191d27;
+    font-family: var(--mono); font-size: 11.5px; color: var(--text-dim);
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .action-log.err { color: var(--red); border-color: rgba(255,93,93,0.3); }
+  .action-log.ok { color: var(--green); }
+
+  /* --- modal --- */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(4,6,10,0.65);
+    align-items: center; justify-content: center; z-index: 50;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal-box {
+    background: var(--panel); border: 1px solid var(--panel-border); border-radius: 12px;
+    padding: 24px; width: 380px; max-width: 90vw;
+  }
+  .modal-box h3 { margin: 0 0 6px 0; font-size: 15px; }
+  .modal-box p { margin: 0 0 16px 0; font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }
+  .modal-mode { display: flex; gap: 10px; margin-bottom: 18px; }
+  .modal-mode label {
+    flex: 1; text-align: center; padding: 10px 8px; border-radius: 7px;
+    border: 1px solid var(--panel-border); font-size: 12.5px; cursor: pointer; user-select: none;
+  }
+  .modal-mode input { display: none; }
+  .modal-mode input:checked + span { font-weight: 700; }
+  .modal-mode label:has(input:checked) { border-color: var(--blue); background: rgba(91,157,255,0.1); color: var(--blue); }
+  .modal-mode label.live-opt:has(input:checked) { border-color: var(--red); background: rgba(255,93,93,0.1); color: var(--red); }
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+  /* --- chart panel --- */
+  .chart-controls { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  select.symbol-select {
+    background: #0e121a; color: var(--text); border: 1px solid var(--panel-border);
+    border-radius: 6px; padding: 7px 10px; font-family: var(--mono); font-size: 12.5px;
+  }
+
+  /* --- terminal log filter --- */
+  .feed-toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+  .feed-filter {
+    flex: 1; background: #0e121a; border: 1px solid var(--panel-border); border-radius: 7px;
+    color: var(--text); font-family: var(--mono); font-size: 12px; padding: 8px 12px;
+  }
+  .feed-filter:focus { outline: none; border-color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <span class="dot" id="liveDot"></span>
+    <div>
+      <h1>VRP-Harvesting Options Agent</h1>
+      <div class="sub" id="brandSub">Alpaca paper trading — portfolio monitor</div>
+    </div>
+  </div>
+  <div class="status-chip" id="statusChip">connecting…</div>
+</div>
+
+<div class="panel" style="margin-bottom:18px;">
+  <div class="ctrl-row">
+    <div>
+      <h2 style="margin:0 0 6px 0;">Control Center</h2>
+      <div class="halt-banner" id="haltBanner"><span class="hb-dot"></span><span id="haltBannerText">checking status…</span></div>
+    </div>
+    <div class="ctrl-actions">
+      <button class="btn btn-warn" id="killSwitchBtn">Pause New Entries</button>
+      <button class="btn btn-primary" id="runCycleBtn">Run Cycle Now</button>
+    </div>
+  </div>
+  <div class="action-log" id="actionLog" style="display:none;"></div>
+</div>
+
+<div class="panel" style="margin-bottom:18px;">
+  <h2>Live Price Chart</h2>
+  <div class="chart-controls">
+    <label style="font-size:12px;color:var(--text-dim);">Symbol</label>
+    <select class="symbol-select" id="symbolSelect"></select>
+  </div>
+  <div id="tvChartContainer" style="height:420px;"></div>
+</div>
+
+<div id="emptyState" class="panel empty-state" style="display:none;">
+  <h3>No trading data yet</h3>
+  <p>This dashboard reads directly from the agent's ledger (<code>data/agent.db</code>), which is created on the first cycle.</p>
+  <p>Run <code>python -m alpaca_quant_agent.main --mode dry-run</code> or start the daemon, then this page will populate automatically.</p>
+</div>
+
+<div id="mainContent" style="display:none;">
+
+  <div class="kpi-grid">
+    <div class="kpi">
+      <div class="label">Portfolio Equity</div>
+      <div class="value" id="kpiEquity">—</div>
+      <div class="sub-value" id="kpiEquitySub">starting balance —</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Total P&amp;L</div>
+      <div class="value" id="kpiTotalPnl">—</div>
+      <div class="sub-value" id="kpiTotalPnlPct">—</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Today's P&amp;L</div>
+      <div class="value" id="kpiTodayPnl">—</div>
+      <div class="sub-value">vs prior session close</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Drawdown from Peak</div>
+      <div class="value" id="kpiDrawdown">—</div>
+      <div class="sub-value" id="kpiDrawdownSub">kill switch at −10%</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Open Positions</div>
+      <div class="value" id="kpiPositions">—</div>
+      <div class="sub-value" id="kpiPositionsSub">of 12 max</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Win Rate (closed)</div>
+      <div class="value" id="kpiWinRate">—</div>
+      <div class="sub-value" id="kpiWinRateSub">—</div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="panel">
+      <h2>Equity Curve</h2>
+      <div id="chartWrap"><canvas id="equityChart"></canvas></div>
+    </div>
+    <div class="panel">
+      <h2>Risk Gate Utilization</h2>
+      <div class="bars" id="riskBars"></div>
+    </div>
+  </div>
+
+  <div class="grid-2" style="grid-template-columns: 1.6fr 1fr;">
+    <div class="panel">
+      <h2>Open Positions <span class="count" id="posCount"></span></h2>
+      <div style="overflow-x:auto;">
+      <table>
+        <thead><tr>
+          <th>Symbol</th><th>Sleeve</th><th>Strategy</th><th>Contracts</th>
+          <th>Credit</th><th>Max Loss</th><th>Δ</th><th>Vega</th><th>DTE</th><th>Earnings</th><th></th>
+        </tr></thead>
+        <tbody id="positionsBody"></tbody>
+      </table>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Correlation Bucket Heat</h2>
+      <div class="bars" id="bucketBars"></div>
+    </div>
+  </div>
+
+  <div class="grid-2" style="grid-template-columns: 1.6fr 1fr;">
+    <div class="panel">
+      <h2>Recent Trades <span class="count" id="tradeCount"></span></h2>
+      <div style="overflow-x:auto;">
+      <table>
+        <thead><tr>
+          <th>Time</th><th>Symbol</th><th>Sleeve</th><th>Action</th><th>Contracts</th><th>Credit/Debit</th><th>Rationale</th>
+        </tr></thead>
+        <tbody id="tradesBody"></tbody>
+      </table>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Live Decision Feed</h2>
+      <div class="feed-toolbar">
+        <input type="text" class="feed-filter" id="feedFilter" placeholder="Filter logs (symbol, decision, text)…">
+        <button class="btn btn-sm" id="feedClearBtn" title="Clear filter">✕</button>
+      </div>
+      <div class="feed" id="decisionFeed"></div>
+    </div>
+  </div>
+
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal-box">
+    <h3 id="modalTitle">Confirm action</h3>
+    <p id="modalBody">Are you sure?</p>
+    <div class="modal-mode" id="modalMode">
+      <label><input type="radio" name="modalDryRun" value="1" checked><span>Dry run</span></label>
+      <label class="live-opt"><input type="radio" name="modalDryRun" value="0"><span>Live (real order)</span></label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="modalCancelBtn">Cancel</button>
+      <button class="btn btn-primary" id="modalConfirmBtn">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://s3.tradingview.com/tv.js"></script>
+<script>
+const fmtUsd = (n, opts={}) => {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  const sign = n < 0 ? '-' : (opts.showPlus ? '+' : '');
+  return sign + '$' + Math.abs(n).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+};
+const fmtPct = (n, opts={}) => {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  const sign = n > 0 && opts.showPlus ? '+' : '';
+  return sign + (n * 100).toFixed(2) + '%';
+};
+const fmtTime = (iso) => {
+  if (!iso) return '—';
+  const d = new Date(iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z');
+  return d.toLocaleString(undefined, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
+};
+const pnlClass = (n) => n > 0 ? 'pos' : (n < 0 ? 'neg' : 'neutral');
+const barClass = (pct) => pct >= 0.9 ? 'fill-danger' : (pct >= 0.7 ? 'fill-warn' : 'fill-ok');
+
+function drawEquityCurve(canvas, points, startingBalance) {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = rect.height;
+  ctx.clearRect(0, 0, W, H);
+
+  if (!points || points.length < 1) {
+    ctx.fillStyle = '#5a6178';
+    ctx.font = '13px sans-serif';
+    ctx.fillText('No equity history yet', 12, H / 2);
+    return;
+  }
+
+  const values = points.map(p => p.equity).concat([startingBalance]);
+  const min = Math.min(...values), max = Math.max(...values);
+  const pad = (max - min) * 0.15 || max * 0.02 || 1;
+  const yMin = min - pad, yMax = max + pad;
+  const marginL = 55, marginR = 10, marginT = 10, marginB = 24;
+  const plotW = W - marginL - marginR, plotH = H - marginT - marginB;
+
+  const xFor = (i) => marginL + (points.length === 1 ? plotW / 2 : (i / (points.length - 1)) * plotW);
+  const yFor = (v) => marginT + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
+
+  // gridlines + y labels
+  ctx.strokeStyle = '#1a1f2b';
+  ctx.fillStyle = '#5a6178';
+  ctx.font = '10px monospace';
+  ctx.textAlign = 'right';
+  const steps = 4;
+  for (let s = 0; s <= steps; s++) {
+    const v = yMin + (s / steps) * (yMax - yMin);
+    const y = yFor(v);
+    ctx.beginPath(); ctx.moveTo(marginL, y); ctx.lineTo(W - marginR, y); ctx.stroke();
+    ctx.fillText('$' + Math.round(v).toLocaleString(), marginL - 8, y + 3);
+  }
+
+  // starting balance reference line
+  const startY = yFor(startingBalance);
+  ctx.strokeStyle = '#3a4258';
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(marginL, startY); ctx.lineTo(W - marginR, startY); ctx.stroke();
+  ctx.setLineDash([]);
+
+  const last = points[points.length - 1].equity;
+  const lineColor = last >= startingBalance ? '#3ddc97' : '#ff5d5d';
+
+  // filled area
+  const grad = ctx.createLinearGradient(0, marginT, 0, marginT + plotH);
+  grad.addColorStop(0, lineColor + '33');
+  grad.addColorStop(1, lineColor + '00');
+  ctx.beginPath();
+  ctx.moveTo(xFor(0), yFor(points[0].equity));
+  points.forEach((p, i) => ctx.lineTo(xFor(i), yFor(p.equity)));
+  ctx.lineTo(xFor(points.length - 1), marginT + plotH);
+  ctx.lineTo(xFor(0), marginT + plotH);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // line
+  ctx.beginPath();
+  points.forEach((p, i) => {
+    const x = xFor(i), y = yFor(p.equity);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = lineColor;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // last point dot
+  const lx = xFor(points.length - 1), ly = yFor(last);
+  ctx.beginPath(); ctx.arc(lx, ly, 3.5, 0, Math.PI * 2);
+  ctx.fillStyle = lineColor; ctx.fill();
+
+  // x labels (first / last)
+  ctx.fillStyle = '#5a6178';
+  ctx.textAlign = 'left';
+  ctx.fillText(points[0].date, marginL, H - 6);
+  ctx.textAlign = 'right';
+  ctx.fillText(points[points.length - 1].date, W - marginR, H - 6);
+}
+
+function renderRiskBar(container, label, value, cap, formatFn) {
+  const pct = cap ? Math.min(Math.abs(value) / cap, 1.5) : 0;
+  const row = document.createElement('div');
+  row.className = 'bar-row';
+  row.innerHTML = `
+    <div class="bar-label">
+      <span class="name">${label}</span>
+      <span class="val">${formatFn(value)} <span style="color:#5a6178">/ cap ${cap !== null && cap !== undefined ? (cap*100).toFixed(0)+'%' : '—'}</span></span>
+    </div>
+    <div class="bar-track"><div class="bar-fill ${barClass(pct)}" style="width:${Math.min(pct*100,100)}%"></div></div>
+  `;
+  container.appendChild(row);
+}
+
+function renderBucketBar(container, bucket) {
+  const pct = bucket.cap_pct ? bucket.pct / bucket.cap_pct : 0;
+  const row = document.createElement('div');
+  row.className = 'bar-row';
+  row.innerHTML = `
+    <div class="bar-label">
+      <span class="name">${bucket.bucket.replace(/_/g,' ')}</span>
+      <span class="val">${fmtPct(bucket.pct)} <span style="color:#5a6178">/ ${bucket.cap_pct !== null ? (bucket.cap_pct*100).toFixed(0)+'%' : '—'}</span></span>
+    </div>
+    <div class="bar-track"><div class="bar-fill ${barClass(pct)}" style="width:${Math.min(pct*100,100)}%"></div></div>
+  `;
+  container.appendChild(row);
+}
+
+async function refresh() {
+  const chip = document.getElementById('statusChip');
+  const dot = document.getElementById('liveDot');
+  let data;
+  try {
+    const res = await fetch('/api/data', {cache: 'no-store'});
+    data = await res.json();
+    if (data.error) throw new Error(data.error);
+    chip.textContent = 'live · updated ' + new Date().toLocaleTimeString();
+    dot.classList.remove('stale');
+  } catch (e) {
+    chip.textContent = 'connection error — retrying…';
+    dot.classList.add('stale');
+    return;
+  }
+
+  document.getElementById('brandSub').textContent =
+    `Alpaca paper trading — ${data.universe_size ?? '—'} symbol universe — portfolio monitor`;
+
+  updateHaltBanner(data.manual_halt);
+  initSymbolSelect(data.universe_symbols);
+
+  if (!data.has_data) {
+    document.getElementById('emptyState').style.display = 'block';
+    document.getElementById('mainContent').style.display = 'none';
+    return;
+  }
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('mainContent').style.display = 'block';
+
+  // KPIs
+  document.getElementById('kpiEquity').textContent = fmtUsd(data.equity);
+  document.getElementById('kpiEquitySub').textContent = `starting balance ${fmtUsd(data.starting_balance)}`;
+
+  const totalPnlEl = document.getElementById('kpiTotalPnl');
+  totalPnlEl.textContent = fmtUsd(data.total_pnl, {showPlus:true});
+  totalPnlEl.className = 'value ' + pnlClass(data.total_pnl);
+  document.getElementById('kpiTotalPnlPct').textContent = fmtPct(data.total_pnl_pct, {showPlus:true});
+
+  const todayEl = document.getElementById('kpiTodayPnl');
+  todayEl.textContent = fmtPct(data.today_pnl_pct, {showPlus:true});
+  todayEl.className = 'value ' + pnlClass(data.today_pnl_pct);
+
+  const ddEl = document.getElementById('kpiDrawdown');
+  ddEl.textContent = fmtPct(data.drawdown_pct);
+  ddEl.className = 'value ' + (data.drawdown_pct < -0.05 ? 'neg' : (data.drawdown_pct < 0 ? 'neutral' : 'pos'));
+
+  document.getElementById('kpiPositions').textContent = data.open_position_count;
+  document.getElementById('kpiPositionsSub').textContent = `of ${data.risk_limits.max_total_positions} max`;
+
+  const cs = data.closed_stats || {};
+  document.getElementById('kpiWinRate').textContent = cs.win_rate !== null && cs.win_rate !== undefined ? fmtPct(cs.win_rate) : '—';
+  document.getElementById('kpiWinRateSub').textContent = cs.count ? `${cs.wins}W / ${cs.losses}L · ${cs.count} closed` : 'no closed trades yet';
+
+  // Equity curve
+  drawEquityCurve(document.getElementById('equityChart'), data.equity_curve, data.starting_balance);
+
+  // Risk bars
+  const riskBars = document.getElementById('riskBars');
+  riskBars.innerHTML = '';
+  const rl = data.risk_limits;
+  renderRiskBar(riskBars, 'Portfolio Heat (max loss)', data.portfolio_heat_pct, rl.max_portfolio_heat_pct, fmtPct);
+  renderRiskBar(riskBars, 'Net Delta / Equity', data.net_delta_pct, rl.portfolio_delta_band_pct, fmtPct);
+  renderRiskBar(riskBars, 'Net Vega / Equity', data.net_vega_pct, rl.portfolio_vega_cap_pct, fmtPct);
+  renderRiskBar(riskBars, 'Sleeve B Allocation', data.sleeve_b_heat_pct, rl.sleeve_b_max_allocation_pct, fmtPct);
+
+  // Bucket heat
+  const bucketBars = document.getElementById('bucketBars');
+  bucketBars.innerHTML = '';
+  if (!data.bucket_heat || data.bucket_heat.length === 0) {
+    bucketBars.innerHTML = '<div style="color:#5a6178;font-size:12px;">No open positions in any correlation bucket.</div>';
+  } else {
+    data.bucket_heat.forEach(b => renderBucketBar(bucketBars, b));
+  }
+
+  // Positions table
+  document.getElementById('posCount').textContent = `(${data.open_positions.length})`;
+  const posBody = document.getElementById('positionsBody');
+  posBody.innerHTML = '';
+  if (data.open_positions.length === 0) {
+    posBody.innerHTML = '<tr class="empty-row"><td colspan="10">No open positions</td></tr>';
+  } else {
+    data.open_positions.forEach(p => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="sym">${p.symbol}</td>
+        <td><span class="tag tag-${p.sleeve}">Sleeve ${p.sleeve}</span></td>
+        <td>${p.strategy_type.replace(/_/g,' ')}</td>
+        <td>${p.contracts}</td>
+        <td>${fmtUsd(p.credit_received)}</td>
+        <td>${fmtUsd(p.max_loss)}</td>
+        <td>${p.net_delta.toFixed(2)}</td>
+        <td>${p.net_vega.toFixed(2)}</td>
+        <td>${p.dte !== null ? p.dte + 'd' : '—'}</td>
+        <td>${p.days_to_earnings !== null && p.days_to_earnings !== undefined ? p.days_to_earnings + 'd' : '—'}</td>
+        <td><button class="btn btn-sm btn-danger close-pos-btn" data-group="${p.position_group}" data-symbol="${p.symbol}">Close</button></td>
+      `;
+      posBody.appendChild(tr);
+    });
+  }
+
+  // Recent trades
+  document.getElementById('tradeCount').textContent = `(${data.recent_trades.length})`;
+  const tradesBody = document.getElementById('tradesBody');
+  tradesBody.innerHTML = '';
+  if (data.recent_trades.length === 0) {
+    tradesBody.innerHTML = '<tr class="empty-row"><td colspan="7">No trades yet</td></tr>';
+  } else {
+    data.recent_trades.forEach(t => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${fmtTime(t.created_at)}</td>
+        <td class="sym">${t.symbol}</td>
+        <td><span class="tag tag-${t.sleeve}">${t.sleeve}</span></td>
+        <td><span class="tag tag-${t.action}">${t.action}</span></td>
+        <td>${t.contracts}</td>
+        <td>${fmtUsd(t.credit_or_debit)}</td>
+        <td style="font-family: var(--sans); color: var(--text-dim); font-size:11.5px;">${t.rationale ?? '—'}</td>
+      `;
+      tradesBody.appendChild(tr);
+    });
+  }
+
+  // Decision feed
+  const feed = document.getElementById('decisionFeed');
+  feed.innerHTML = '';
+  if (data.recent_decisions.length === 0) {
+    feed.innerHTML = '<div style="color:#5a6178;font-size:12px;">No decisions logged yet</div>';
+  } else {
+    data.recent_decisions.forEach(d => {
+      const div = document.createElement('div');
+      div.className = 'feed-item';
+      div.innerHTML = `
+        <div class="fi-top">
+          <span class="fi-decision d-${d.decision}">${(d.symbol ? d.symbol + ' — ' : '') + d.decision.replace(/_/g,' ')}</span>
+          <span class="fi-time">${fmtTime(d.created_at)}</span>
+        </div>
+        <div class="fi-detail">${d.detail ?? ''}</div>
+      `;
+      feed.appendChild(div);
+    });
+  }
+  applyFeedFilter();
+}
+
+// ---------- Control Center: kill switch, run cycle, manual close ----------
+
+function showActionLog(text, kind) {
+  const el = document.getElementById('actionLog');
+  el.style.display = 'block';
+  el.className = 'action-log' + (kind ? ' ' + kind : '');
+  el.textContent = text;
+}
+
+async function postJson(path, payload) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload || {}),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || ('request failed: ' + res.status));
+  return data;
+}
+
+// Generic confirm modal. opts: {title, body, showModeToggle, onConfirm(dryRun)}
+let modalOnConfirm = null;
+function openModal(opts) {
+  document.getElementById('modalTitle').textContent = opts.title;
+  document.getElementById('modalBody').textContent = opts.body;
+  document.getElementById('modalMode').style.display = opts.showModeToggle === false ? 'none' : 'flex';
+  document.querySelector('input[name="modalDryRun"][value="1"]').checked = true;
+  modalOnConfirm = opts.onConfirm;
+  document.getElementById('modalOverlay').classList.add('show');
+}
+function closeModal() {
+  document.getElementById('modalOverlay').classList.remove('show');
+  modalOnConfirm = null;
+}
+document.getElementById('modalCancelBtn').addEventListener('click', closeModal);
+document.getElementById('modalOverlay').addEventListener('click', (e) => { if (e.target.id === 'modalOverlay') closeModal(); });
+document.getElementById('modalConfirmBtn').addEventListener('click', async () => {
+  if (!modalOnConfirm) return;
+  const dryRun = document.querySelector('input[name="modalDryRun"]:checked').value === '1';
+  const cb = modalOnConfirm;
+  closeModal();
+  await cb(dryRun);
+});
+
+let currentHalted = false;
+document.getElementById('killSwitchBtn').addEventListener('click', () => {
+  const willHalt = !currentHalted;
+  openModal({
+    title: willHalt ? 'Pause new entries?' : 'Resume new entries?',
+    body: willHalt
+      ? 'Existing positions will still be managed (exit rules still run). No new trades will be opened until you resume.'
+      : 'The agent will resume screening and opening new trades on its normal schedule.',
+    showModeToggle: false,
+    onConfirm: async () => {
+      try {
+        const res = await postJson('/api/kill-switch', {halted: willHalt});
+        showActionLog(`Kill switch ${res.halted ? 'ENABLED' : 'disabled'} at ${new Date(res.set_at).toLocaleTimeString()}`, 'ok');
+        refresh();
+      } catch (e) { showActionLog('Error: ' + e.message, 'err'); }
+    },
+  });
+});
+
+document.getElementById('runCycleBtn').addEventListener('click', () => {
+  openModal({
+    title: 'Run a trading cycle now?',
+    body: 'This runs the full pipeline immediately (screen candidates, apply risk gates, LLM review) instead of waiting for the next scheduled cycle. Dry run only logs what it would do; Live can place real paper-account orders.',
+    showModeToggle: true,
+    onConfirm: async (dryRun) => {
+      showActionLog('Running cycle' + (dryRun ? ' (dry run)' : ' (LIVE)') + '… this can take up to a minute.', null);
+      try {
+        const res = await postJson('/api/run-cycle', {dry_run: dryRun});
+        showActionLog(res.summary, 'ok');
+        refresh();
+      } catch (e) { showActionLog('Error: ' + e.message, 'err'); }
+    },
+  });
+});
+
+document.getElementById('positionsBody').addEventListener('click', (e) => {
+  const btn = e.target.closest('.close-pos-btn');
+  if (!btn) return;
+  const group = btn.dataset.group, symbol = btn.dataset.symbol;
+  openModal({
+    title: `Close ${symbol} position?`,
+    body: `This overrides the deterministic exit rules and closes this position (${group}) right now at the current market price. Dry run only logs the intent; Live places a real closing order.`,
+    showModeToggle: true,
+    onConfirm: async (dryRun) => {
+      showActionLog(`Closing ${symbol} (${group})` + (dryRun ? ' (dry run)' : ' (LIVE)') + '…', null);
+      try {
+        const res = await postJson('/api/close-position', {position_group: group, dry_run: dryRun});
+        showActionLog(res.summary, 'ok');
+        refresh();
+      } catch (e) { showActionLog('Error: ' + e.message, 'err'); }
+    },
+  });
+});
+
+function updateHaltBanner(manualHalt) {
+  currentHalted = !!(manualHalt && manualHalt.halted);
+  const banner = document.getElementById('haltBanner');
+  const text = document.getElementById('haltBannerText');
+  const btn = document.getElementById('killSwitchBtn');
+  if (currentHalted) {
+    banner.classList.add('halted');
+    text.textContent = 'Trading PAUSED' + (manualHalt.reason ? ' — ' + manualHalt.reason : '') + (manualHalt.set_at ? ' (since ' + new Date(manualHalt.set_at).toLocaleString() + ')' : '');
+    btn.textContent = 'Resume New Entries';
+  } else {
+    banner.classList.remove('halted');
+    text.textContent = 'Trading active — new entries allowed';
+    btn.textContent = 'Pause New Entries';
+  }
+}
+
+// ---------- Live price chart (TradingView) ----------
+
+let tvWidget = null;
+function initChart(symbol) {
+  const container = document.getElementById('tvChartContainer');
+  if (typeof TradingView === 'undefined') {
+    container.innerHTML = '<div style="color:#5a6178;font-size:12px;padding:20px;">Chart library failed to load (needs internet access to s3.tradingview.com).</div>';
+    return;
+  }
+  container.innerHTML = '';
+  tvWidget = new TradingView.widget({
+    autosize: true,
+    symbol: symbol,
+    interval: '15',
+    timezone: 'America/New_York',
+    theme: 'dark',
+    style: '1',
+    locale: 'en',
+    toolbar_bg: '#12161f',
+    enable_publishing: false,
+    hide_top_toolbar: false,
+    hide_legend: false,
+    studies: ['STD;EMA', 'STD;ADX'],
+    container_id: 'tvChartContainer',
+  });
+}
+
+let symbolsInitialized = false;
+function initSymbolSelect(symbols) {
+  if (symbolsInitialized || !symbols || symbols.length === 0) return;
+  symbolsInitialized = true;
+  const select = document.getElementById('symbolSelect');
+  select.innerHTML = symbols.map(s => `<option value="${s}">${s}</option>`).join('');
+  select.value = symbols.includes('SPY') ? 'SPY' : symbols[0];
+  select.addEventListener('change', () => initChart(select.value));
+  initChart(select.value);
+}
+
+// ---------- Decision feed filter ----------
+
+document.getElementById('feedFilter').addEventListener('input', applyFeedFilter);
+document.getElementById('feedClearBtn').addEventListener('click', () => {
+  document.getElementById('feedFilter').value = '';
+  applyFeedFilter();
+});
+function applyFeedFilter() {
+  const q = document.getElementById('feedFilter').value.trim().toLowerCase();
+  document.querySelectorAll('#decisionFeed .feed-item').forEach(item => {
+    item.style.display = !q || item.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+
+refresh();
+setInterval(refresh, 15000);
+window.addEventListener('resize', refresh);
+</script>
+
+</body>
+</html>

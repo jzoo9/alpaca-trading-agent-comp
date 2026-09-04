@@ -115,6 +115,24 @@ The daemon checks the market clock every cycle and only trades during
 regular market hours; it sleeps otherwise and never crashes out on a
 single cycle's exception (logs and retries next interval).
 
+## 9. Monitoring dashboard
+
+```bash
+python -m alpaca_quant_agent.main --mode dashboard          # http://localhost:8787
+python -m alpaca_quant_agent.main --mode dashboard --port 9000
+```
+
+A local, read-only web page for watching the competition account: portfolio
+equity and total/today P&L, an equity curve, open positions, risk-gate
+utilization (portfolio heat, delta/vega bands, correlation-bucket
+concentration), realized win rate on closed trades, and a live feed of every
+trade and gate/LLM decision. It reads straight from the SQLite ledger
+(`ledger.py`) that every cycle already writes to, refreshes every 15 seconds,
+and needs no Alpaca/Featherless credentials -- safe to leave open in a
+browser tab alongside the daemon for the duration of the competition. Run it
+in a second terminal while `--mode daemon` (or `dry-run`/`run-once`) is
+running in the first.
+
 ## Project layout
 
 See `WRITEUP.md` for the strategy/risk narrative, and the module
