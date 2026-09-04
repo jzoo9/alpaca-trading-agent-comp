@@ -16,7 +16,9 @@ from alpaca_quant_agent.execution.alpaca_mcp import AlpacaMcpClient
 logger = logging.getLogger(__name__)
 
 
-async def _market_is_open(config: Config) -> bool:
+async def market_is_open(config: Config) -> bool:
+    """Public so streamlit_app/app.py can reuse the same market-hours check
+    the real daemon uses, instead of re-implementing it."""
     async with AlpacaMcpClient(config) as client:
         clock = await client.get_clock()
         return bool(clock.get("is_open"))
@@ -28,7 +30,7 @@ async def run_daemon(config: Config) -> None:
 
     while True:
         try:
-            if await _market_is_open(config):
+            if await market_is_open(config):
                 logger.info("cycle starting at %s", datetime.now().isoformat())
                 summary = await run_one_cycle(config)
                 logger.info("cycle summary: %s", summary)

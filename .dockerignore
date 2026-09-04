@@ -1,0 +1,12 @@
+.venv
+.git
+__pycache__
+*.pyc
+data/
+.env
+.env.example
+*.log
+.DS_Store
+streamlit_app/.streamlit/secrets.toml
+tests/
+launchd/

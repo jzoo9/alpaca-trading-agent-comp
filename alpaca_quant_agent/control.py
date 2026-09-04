@@ -47,3 +47,30 @@ def set_halt_state(db_path: str, halted: bool, reason: str = "") -> HaltState:
     state = HaltState(halted=halted, reason=reason, set_at=datetime.utcnow().isoformat() + "Z")
     path.write_text(json.dumps({"halted": state.halted, "reason": state.reason, "set_at": state.set_at}))
     return state
+
+
+def _live_mode_path(db_path: str) -> Path:
+    return Path(db_path).with_name("live_mode.json")
+
+
+def get_live_mode(db_path: str) -> bool:
+    """Whether the Streamlit self-driving demo (streamlit_app/app.py) should
+    place real paper orders (True) or only log what it would do (False).
+    Persisted as a file (not st.session_state) so the setting is shared
+    across every browser tab/session hitting the same deployed app, rather
+    than each tab defaulting back to dry-run independently. Defaults to
+    dry-run (False) if never set -- a missing/corrupt file must never
+    silently enable live trading."""
+    path = _live_mode_path(db_path)
+    if not path.exists():
+        return False
+    try:
+        return bool(json.loads(path.read_text()).get("live", False))
+    except (json.JSONDecodeError, OSError):
+        return False
+
+
+def set_live_mode(db_path: str, live: bool) -> None:
+    path = _live_mode_path(db_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"live": live, "set_at": datetime.utcnow().isoformat() + "Z"}))

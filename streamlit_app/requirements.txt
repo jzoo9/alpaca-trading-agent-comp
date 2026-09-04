@@ -1,0 +1,8 @@
+# Installs the whole alpaca_quant_agent package (and its own dependencies
+# from pyproject.toml) plus what this Streamlit app itself needs. Streamlit
+# Cloud runs `pip install -r requirements.txt` from the repo root, so the
+# relative editable install below resolves correctly.
+-e .
+streamlit>=1.35.0
+streamlit-autorefresh>=1.0.1
+pandas>=2.2.0
